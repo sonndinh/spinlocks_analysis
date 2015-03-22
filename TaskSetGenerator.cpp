@@ -34,7 +34,7 @@ Task* create_task(unsigned int m) {
 	/* Generate critical path length parameters:
 	 * max, min, mean, stdev (ms)
 	 */
-	double max_li = t_i/2;
+	double max_li = t_i/3;
 	double min_li = 1;
 	double mean_li = (min_li + max_li)/2;
 	double stdev_li = (min_li + max_li)/4;

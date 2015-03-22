@@ -15,8 +15,12 @@ double response_time(double C, double L, unsigned int n, double Bn, double B1) {
 
 /* Initialize blocking time, #processors, response time 
  * Also, update "interferences" for each task in task set
+ * Return: true, if task set are OK after initiating
+ *         false, otherwise
+ * (OK means total processors allocated to tasks < m AND 
+ *  there is no task with Response time > Deadline)
  */
-void init_iteration(TaskSet* taskset) {
+bool init_iteration(TaskSet* taskset, unsigned int m) {
 	map<TaskID, Task*> &tset = taskset->tasks;
 	map<TaskID, Task*>::iterator it = tset.begin();
 	for (; it != tset.end(); it++) {
@@ -50,24 +54,40 @@ void init_iteration(TaskSet* taskset) {
 	}
 
 
-	//#define _DEBUG_
-#ifdef _DEBUG_
+	//#define _INIT_DEBUG_
+	//#define _INIT_VERBOSE_
+#ifdef _INIT_DEBUG_
 	/* Debug: dump tasks information */
+	unsigned int total_proc = 0;
+	bool isOk = true;
 	for (it=tset.begin(); it!=tset.end(); it++) {
+#ifdef _INIT_VERBOSE_
 		cout << "Task ID: " << it->second->taskID << endl;
 		cout << "Parameters (T,L,U,C): (" << it->second->T << "," <<
 			it->second->L << "," << it->second->U << "," << 
 			it->second->C << ")" << endl;
+		cout << "#processors: " << it->second->procNum << endl;
+		cout << "Response time: " << it->second->R << endl;
+		cout << "Response time > Deadline: " <<
+			((it->second->R > it->second->T)? "true" : "false") << endl;
+#endif // _INIT_VERBOSE_
+		
+		total_proc += it->second->procNum;
+		if (it->second->R > it->second->T)
+			isOk = false;
 		map<ResourceID, Resource*> &res = it->second->myResources;
 		map<ResourceID, Resource*>::iterator resIt = res.begin();
+#ifdef _INIT_VERBOSE_
 		cout << "Resource ID list: (";
 		for (; resIt!=res.end(); resIt++) {
 			cout << resIt->first << " ";
 		}
 		cout << ")" << endl;
+#endif // _INIT_VERBOSE_
 
 		map<ResourceID, vector<TaskID>*> &interfe = it->second->interferences;
 		map<ResourceID, vector<TaskID>*>::iterator intIt = interfe.begin();
+#ifdef _INIT_VERBOSE_
 		cout << "Interference List ============= " << endl;
 		for (; intIt!=interfe.end(); intIt++) {
 			cout << "   For resource ID " << intIt->first << ": ";
@@ -78,18 +98,104 @@ void init_iteration(TaskSet* taskset) {
 			cout << endl;
 		}
 		cout << endl;
+#endif // _INIT_VERBOSE_
 	}
-#endif // _DEBUG_
+	cout << "Total #processors: " << total_proc << endl;
+	if (total_proc > m || isOk == false) {
+		cout << "Task fail !!!" << endl;
+		return false;
+	}
+	return true;
+#endif // _INIT_DEBUG_
+
+	/* In case of no debugging, it just returns true 
+	 * But it does not necessarily mean the task set is OK
+	 */
+	return true;
 }
 
-void task_analysis(Task* task, TaskSet* tset) {
-	map<ResourceID, Resource*> &resources = task->myResources;
-	map<ResourceID, Resource*>::iterator it = resources.begin();
-	for ( ; it != resources.end(); it++) {
-		
+/* Structure to store information of requests 
+ * from tau_x to l_q which intefere with tau_i
+ * - requestNum: #requests of tau_x to l_q while tau_i pending
+ * - csLen: CS length of request from tau_x to l_q (microsecond)
+ */
+typedef struct {
+	unsigned int requestNum;
+	double csLen;
+} CSData;
+
+/* Update task's blocking time, #processors, and response time 
+ * based on results from the previous iteration.
+ */
+void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
+	TaskID myId = task->taskID;
+	TaskID r_i = task->R;
+	map<ResourceID, vector<TaskID>*> &interferences = task->interferences;
+	map<ResourceID, vector<TaskID>*>::iterator rit = interferences.begin();
+	map<TaskID, Task*> &tset = taskset->tasks;
+
+	/* Gather information from requests of tau_x which 
+	 * interfere with requests of tau_i
+	 */
+	map<ResourceID, map<TaskID, CSData> > x_vars;
+	for (; rit != interferences.end(); rit++) {
+		ResourceID rId = rit->first;
+		vector<TaskID>* vec = rit->second;
+		for (int i=0; i<vec->size(); i++) {
+			TaskID tId = vec->at(i);
+			/* Abort if this is me, but this is impossible */
+			if (tId == myId)
+				continue;
+			Task* tau_x = tset[tId];
+			map<ResourceID, Resource*> &tau_x_resources = tau_x->myResources;
+			unsigned int N_x_q = tau_x_resources[rId]->requestNum;
+			double csLen = tau_x_resources[rId]->CSLength;
+			unsigned int request_num = njobs(tau_x, r_i)*N_x_q;
+			map<TaskID, CSData> &inner_map = x_vars[rId];
+			CSData data = {request_num, csLen};
+			inner_map.insert(std::pair<TaskID, CSData> (tId, data));
+		}
 	}
+
+	/* Print debug information */
+	//#define _ITER_DEBUG_
+#ifdef _ITER_DEBUG_
+	cout << "FOR TASK " << myId << endl;
+	map<ResourceID, map<TaskID, CSData> >::iterator it = x_vars.begin();
+	for (; it != x_vars.end(); it++) {
+		ResourceID rId = it->first;
+		cout << "Resource ID: " << rId << endl;
+		cout << "Interfere (TaskID, RequestNum, CSLen): ";
+		map<TaskID, CSData> &inner_map = it->second;
+		map<TaskID, CSData>::iterator inner_it = inner_map.begin();
+		for (; inner_it != inner_map.end(); inner_it++) {
+			cout << "(" << inner_it->first << "," <<
+				inner_it->second.requestNum << "," <<
+				inner_it->second.csLen << ")  ";
+		}
+		cout << endl;
+	}
+	cout << endl;
+#endif  // _ITER_DEBUG_
+
+
+	/* Solve the maximization of blocking */
+	
 }
 
 void blocking_analysis(TaskSet* tset) {
 	
+}
+
+
+/* Helper funtions */
+
+/* Return number of tasks tau_x in interval length t */
+unsigned int njobs(Task* tau_x, double t) {
+	double tau_x_period = tau_x->T;
+	double tau_x_responsetime = tau_x->R;
+	
+	unsigned int ret = ceil((t+tau_x_responsetime)/tau_x_period);
+	//	cout << "njobs() returns: " << ret << endl;
+	return ret;
 }
