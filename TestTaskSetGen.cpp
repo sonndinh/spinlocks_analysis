@@ -9,7 +9,8 @@ int main(int argc, char** argv) {
 	const int TASKSET_NUM = 1;
 	const int PROCNUM = 16;
 	int success_count = 0;
-	
+
+	/* Generate a bunch of task sets */
 	for (int i=0; i<TASKSET_NUM; i++) {
 		TaskSet* taskset = create_taskset(PROCNUM, 8, 5, cslen_type);
 		bool ret = init_iteration(taskset, PROCNUM);

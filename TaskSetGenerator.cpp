@@ -1,18 +1,35 @@
 #include <iostream>
 #include <cmath>
-#include <chrono>
 #include <random>
 #include <map>
 #include <algorithm>
+
+#ifdef _CXX_11_
+#include <chrono>
+#else
+#include <sys/time.h>
+#endif
+
 #include "TaskSetGenerator.h"
 
 using namespace std;
+
+unsigned seed() {
+#ifdef _CXX_11_
+	unsigned seed = chrono::system_clock::now().time_since_epoch().count();
+#else
+	timeval time;
+	gettimeofday(&time, NULL);
+	unsigned seed = time.tv_sec*1000000 + time.tv_utime;
+#endif
+	return seed;
+}
 
 /* Resource sharing factor */
 double RSF[] = {0.2, 0.3, 0.5, 0.75};
 
 Task* create_task(unsigned int m) {
-	unsigned seed = chrono::system_clock::now().time_since_epoch().count();
+	unsigned seed = seed();
 	knuth_b generator(seed);
 	normal_distribution<double> period_dist(MEAN_TI, STDEV_TI);
 
@@ -96,7 +113,7 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 	unsigned int task_num = tset->tasks.size();
 
 	/* Common random number generator for choosing rsf, dirty task */
-	unsigned seed = chrono::system_clock::now().time_since_epoch().count();
+	unsigned seed = seed();
 	minstd_rand0 rangen(seed);
 	/* Set type of critical section length */
 	double mean_cslen, stdev_cslen, min_cslen, max_cslen;

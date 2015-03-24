@@ -1,6 +1,9 @@
 #include <math.h>
 #include <iostream>
+#include <ilcplex/ilocplex.h>
 #include "BlockingAnalysis.h"
+
+ILOSTLBEGIN
 
 /* Update number of processors allocated */
 unsigned int alloc_proc(double C, double L, double D, double Bn, double B1) {
@@ -135,7 +138,7 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	map<TaskID, Task*> &tset = taskset->tasks;
 
 	/* Gather information from requests of tau_x which 
-	 * interfere with requests of tau_i
+	 * interfere with my requests
 	 */
 	map<ResourceID, map<TaskID, CSData> > x_vars;
 	for (; rit != interferences.end(); rit++) {
@@ -158,7 +161,7 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	}
 
 	/* Print debug information */
-	//#define _ITER_DEBUG_
+#define _ITER_DEBUG_
 #ifdef _ITER_DEBUG_
 	cout << "FOR TASK " << myId << endl;
 	map<ResourceID, map<TaskID, CSData> >::iterator it = x_vars.begin();
@@ -180,7 +183,23 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 
 
 	/* Solve the maximization of blocking */
-	
+	IloEnv env;
+	try {
+		IloModel model(env);
+		IloNumVarArray var(env);
+		IloRangeArray con(env);
+
+		var.add(IloNumVar(env, 0.0, 1.0));
+
+		IloCplex cplex(model);
+		
+	} catch (IloException &e) {
+		cerr << "Ilog concert exception: " << e << endl;
+	} catch (...) {
+		cerr << "Unknown exception!" << endl;
+	}
+
+	env.end();
 }
 
 void blocking_analysis(TaskSet* tset) {
