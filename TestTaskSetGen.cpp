@@ -6,7 +6,7 @@ using namespace std;
 
 int main(int argc, char** argv) {
 	CriticalDuration cslen_type = Short;
-	const int TASKSET_NUM = 1;
+	const int TASKSET_NUM = 1000;
 	const int PROCNUM = 16;
 	int success_count = 0;
 
@@ -24,6 +24,6 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	//	cout << "Percent of success after initiating: " << (double)success_count*100/TASKSET_NUM << "%" << endl;
+	cout << "Percent of success after initiating: " << (double)success_count*100/TASKSET_NUM << "%" << endl;
 	return 0;
 }

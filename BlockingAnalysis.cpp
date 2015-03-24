@@ -161,7 +161,7 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	}
 
 	/* Print debug information */
-#define _ITER_DEBUG_
+	//#define _ITER_DEBUG_
 #ifdef _ITER_DEBUG_
 	cout << "FOR TASK " << myId << endl;
 	map<ResourceID, map<TaskID, CSData> >::iterator it = x_vars.begin();
@@ -188,9 +188,9 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 		IloModel model(env);
 		IloNumVarArray var(env);
 		IloRangeArray con(env);
-
+		
 		var.add(IloNumVar(env, 0.0, 1.0));
-
+		
 		IloCplex cplex(model);
 		
 	} catch (IloException &e) {
