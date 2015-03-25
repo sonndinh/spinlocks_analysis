@@ -39,7 +39,7 @@ typedef unsigned int TaskID;
 typedef struct Resource {
 	ResourceID resourceID;
 	double CSLength; // critical section length, in microsecond
-	int requestNum;  // number of requests from an enclosed task
+	unsigned int requestNum;  // number of requests from an enclosed task
 } Resource;
 
 /* Implicit deadline parallel task */

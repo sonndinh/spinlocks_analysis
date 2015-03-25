@@ -123,6 +123,7 @@ bool init_iteration(TaskSet* taskset, unsigned int m) {
  * - csLen: CS length of request from tau_x to l_q (microsecond)
  */
 typedef struct {
+	unsigned int procNum;
 	unsigned int requestNum;
 	double csLen;
 } CSData;
@@ -140,7 +141,7 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	/* Gather information from requests of tau_x which 
 	 * interfere with my requests
 	 */
-	map<ResourceID, map<TaskID, CSData> > x_vars;
+	map<ResourceID, map<TaskID, CSData> > x_data;
 	for (; rit != interferences.end(); rit++) {
 		ResourceID rId = rit->first;
 		vector<TaskID>* vec = rit->second;
@@ -150,12 +151,13 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 			if (tId == myId)
 				continue;
 			Task* tau_x = tset[tId];
+			unsigned int procNum = tau_x->procNum;
 			map<ResourceID, Resource*> &tau_x_resources = tau_x->myResources;
 			unsigned int N_x_q = tau_x_resources[rId]->requestNum;
 			double csLen = tau_x_resources[rId]->CSLength;
 			unsigned int request_num = njobs(tau_x, r_i)*N_x_q;
-			map<TaskID, CSData> &inner_map = x_vars[rId];
-			CSData data = {request_num, csLen};
+			map<TaskID, CSData> &inner_map = x_data[rId];
+			CSData data = {procNum, request_num, csLen};
 			inner_map.insert(std::pair<TaskID, CSData> (tId, data));
 		}
 	}
@@ -164,8 +166,8 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	//#define _ITER_DEBUG_
 #ifdef _ITER_DEBUG_
 	cout << "FOR TASK " << myId << endl;
-	map<ResourceID, map<TaskID, CSData> >::iterator it = x_vars.begin();
-	for (; it != x_vars.end(); it++) {
+	map<ResourceID, map<TaskID, CSData> >::iterator it = x_data.begin();
+	for (; it != x_data.end(); it++) {
 		ResourceID rId = it->first;
 		cout << "Resource ID: " << rId << endl;
 		cout << "Interfere (TaskID, RequestNum, CSLen): ";
@@ -186,11 +188,82 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	IloEnv env;
 	try {
 		IloModel model(env);
-		IloNumVarArray var(env);
-		IloRangeArray con(env);
+		IloRangeArray cons(env);
+		/* Variables table of requests from other tasks */
+		map<ResourceID, map<TaskID, IloNumVarArray> > x_vars;
+
+		map<ResourceID, map<TaskID, CSData> >::iterator iter = x_data.begin();
+		for (; iter != x_data.end(); iter++) {
+			ResourceID resId = iter->first;
+			/* Get an inner map for this resource ID */
+			map<TaskID, IloNumVarArray> &innerMap = x_vars[resId];
+			map<TaskID, CSData> &taskData = iter->second;
+			map<TaskID, CSData>::iterator innerIter = taskData.begin();
+			for (; innerIter != taskData.end(); innerIter++) {
+				/* Each other task has a corresponding IloNumVarArray */
+				TaskID taskId = innerIter->first;
+				/* Get number of interfering requests from this task 
+				 * to this resource
+				 */
+				unsigned int varNum = innerIter->second.requestNum;
+				IloNumVarArray x(env);				
+				/* All x variables are in range [0,1] */
+				for (int i=0; i<varNum; i++) {
+					x.add(IloNumVar(env, 0.0, 1.0, ILOFLOAT));
+				}
+				innerMap.insert(std::pair<TaskID, IloNumVarArray>(taskId, x));
+			} /* Task */
+		} /* Resource */
 		
-		var.add(IloNumVar(env, 0.0, 1.0));
-		
+		/* Populate data for my (tau_i's) y & x variables 
+		 * For my_y_vars: each element of a vector 
+		 * corresponds to a row of matrix Y (n_i * N_i_q)
+		 * For my_x_vars: each element of a vector 
+		 * corresponds to a column of matrix X (N_i_q * n_i)
+		 */
+		unsigned int my_proc_num = task->procNum;
+		map<ResourceID, vector<IloNumVarArray> > my_y_vars;
+		map<ResourceID, vector<IloNumVarArray> > my_x_vars;
+		map<ResourceID, Resource*> &myRes = task->myResources;
+		map<ResourceID, Resource*>::iterator my_rit = myRes.begin();
+		for (; my_rit != myRes.end(); my_rit++) {
+			ResourceID rId = my_rit->first;
+			unsigned int my_req_num = my_rit->second->requestNum;
+			vector<IloNumVarArray> &ys = my_y_vars[rId];
+			vector<IloNumVarArray> &xs = my_x_vars[rId];
+			for (int u=0; u<my_proc_num; u++) {
+				IloNumVarArray y(env);
+				IloNumVarArray x(env);
+				for (int k=0; k<my_req_num; k++) {
+					y.add(IloNumVar(env, 0, 1, ILOINT));
+					x.add(IloNumVar(env, 0.0, 1.0, ILOFLOAT));
+				}
+				ys.push_back(y);
+				xs.push_back(x);
+			}
+		}
+
+		/* Impose constraints */
+		/* Constraint 2: total sum of y variables for a resource 
+		 * bounded by number of requests to that resource 
+		 */
+		/* Constraint 3: for each request to a resource, sum 
+		 * of corresponding y variables is at most 1
+		 */
+		map<ResourceID, vector<IloNumVarArray> >::iterator y_it = my_y_vars.begin();
+		for (; y_it != my_y_vars.end(); y_it++) {
+			ResourceID rId = y_it->first;			
+			vector<IloNumVarArray> &var_arrays = y_it->second;
+			unsigned int req_num = myRes[rId]->requestNum;
+			for (int k=0; k<req_num; k++) {
+				IloExpr expr(env);
+				for (int u=0; u<my_proc_num; u++) {
+					expr += var_arrays[u][k];
+				}
+				cons.add(expr <= 1);
+			}
+		} /* End constraint 3 */
+
 		IloCplex cplex(model);
 		
 	} catch (IloException &e) {
