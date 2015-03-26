@@ -187,12 +187,14 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	/* Solve the maximization of blocking */
 	IloEnv env;
 	try {
+		cout << "Start modeling..." << endl;
 		IloModel model(env);
 		IloRangeArray cons(env);
 		/* Variables table of requests from other tasks */
 		map<ResourceID, map<TaskID, IloNumVarArray> > x_vars;
-
 		map<ResourceID, map<TaskID, CSData> >::iterator iter = x_data.begin();
+
+		cout << "Start create variables for interfering tasks" << endl;
 		for (; iter != x_data.end(); iter++) {
 			ResourceID resId = iter->first;
 			/* Get an inner map for this resource ID */
@@ -214,6 +216,7 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 				innerMap.insert(std::pair<TaskID, IloNumVarArray>(taskId, x));
 			} /* Task */
 		} /* Resource */
+		cout << "Stop creating variables for interfering tasks" << endl;
 		
 		/* Populate data for my (tau_i's) y & x variables 
 		 * For my_y_vars: each element of a vector 
@@ -226,6 +229,8 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 		map<ResourceID, vector<IloNumVarArray> > my_x_vars;
 		map<ResourceID, Resource*> &myRes = task->myResources;
 		map<ResourceID, Resource*>::iterator my_rit = myRes.begin();
+		
+		cout << "Start populating my variables" << endl;
 		for (; my_rit != myRes.end(); my_rit++) {
 			ResourceID rId = my_rit->first;
 			unsigned int my_req_num = my_rit->second->requestNum;
@@ -242,14 +247,14 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 				xs.push_back(x);
 			}
 		}
+		cout << "Stop populating my variables" << endl;
 
 		/* Impose constraints */
-		/* Constraint 2: total sum of y variables for a resource 
-		 * bounded by number of requests to that resource 
-		 */
 		/* Constraint 3: for each request to a resource, sum 
 		 * of corresponding y variables is at most 1
+		 * Constraint 2 then follows
 		 */
+		cout << "Start imposing constraint 3" << endl;
 		map<ResourceID, vector<IloNumVarArray> >::iterator y_it = my_y_vars.begin();
 		for (; y_it != my_y_vars.end(); y_it++) {
 			ResourceID rId = y_it->first;			
@@ -261,11 +266,127 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 					expr += var_arrays[u][k];
 				}
 				cons.add(expr <= 1);
+				expr.end(); /* Important: must free it */
 			}
 		} /* End constraint 3 */
-
-		IloCplex cplex(model);
+		cout << "End imposing constraint 3" << endl;
 		
+		/* Constraint 5: products of mismatched y and x variables 
+		 * are all zero
+		 */
+		cout << "Start imposing constraints 5 and 6" << endl;
+		y_it = my_y_vars.begin();
+		for (; y_it != my_y_vars.end(); y_it++) {
+			ResourceID rId = y_it->first;
+			vector<IloNumVarArray> &ys = y_it->second;
+			vector<IloNumVarArray> &xs = my_x_vars[rId];
+			unsigned int req_num = myRes[rId]->requestNum;
+			for (int yi=0; yi<my_proc_num; yi++) {
+				for (int xi=0; xi<my_proc_num; xi++) {
+					if (yi == xi)
+						continue;
+
+					IloExpr expr(env);
+					for (int k=0; k<req_num; k++) {
+						expr += ys[yi][k] * xs[xi][k];
+					}
+					cons.add(expr <= 0);
+					expr.end();
+				}
+			}
+
+			/* Constraint 6: requests from me cannot block me 
+			 * (processor under consideration is the first 
+			 * processor of tau_i)
+			 */
+			IloExpr expr(env);
+			for (int k=0; k<req_num; k++) {
+				expr += ys[0][k] * xs[0][k];
+			}
+			cons.add(expr <= 0);
+			expr.end();
+		} /* End constraints 5 & 6 */
+		cout << "Stop imposing constraints 5 and 6" << endl;
+
+		/* Constraint 8 (FIFO): at most 1 request from each other
+		 * processor can block me
+		 */
+		cout << "Start imposing constraint 8" << endl;
+		map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = 
+			x_vars.begin();
+		for (; inter_it != x_vars.end(); inter_it++) {
+			ResourceID rId = inter_it->first;
+			map<TaskID, IloNumVarArray> &others = inter_it->second;
+			map<TaskID, IloNumVarArray>::iterator others_it = others.begin();
+			for (; others_it != others.end(); others_it++) {
+				TaskID tId = others_it->first;
+				IloNumVarArray &x = others_it->second;
+				IloExpr expr(env);
+				unsigned int his_request_num = x_data[rId][tId].requestNum;
+				int his_proc_num = x_data[rId][tId].procNum;
+				for (int k=0; k<his_request_num; k++) {
+					expr += x[k];
+				}
+				vector<IloNumVarArray> &my_ys = my_y_vars[rId];
+				unsigned int my_request_num = myRes[rId]->requestNum;
+				for (int i=0; i<my_request_num; i++) {
+					expr -= his_proc_num * my_ys[0][i];
+				}
+				cons.add(expr <= 0);
+				expr.end();
+			}
+		}
+		cout << "Stop imposing constraint 8" << endl;
+		
+		/* Add constraints to Cplex model */
+		model.add(cons);
+
+		/* Objective function */
+		cout << "Building objective function" << endl;
+		IloExpr obj(env);
+		inter_it = x_vars.begin();
+		for (; inter_it != x_vars.end(); inter_it++) {
+			ResourceID rId = inter_it->first;
+			map<TaskID, IloNumVarArray> &others = inter_it->second;
+			map<TaskID, IloNumVarArray>::iterator others_it = others.begin();
+			for (; others_it != others.end(); others_it++) {
+				TaskID tId = others_it->first;
+				double csLen = x_data[rId][tId].csLen;
+				unsigned int varNum = x_data[rId][tId].requestNum;
+				for (int i=0; i<varNum; i++) {
+					obj += csLen * others[tId][i];
+				}
+			}
+		}
+
+		y_it = my_y_vars.begin();
+		for (; y_it != my_y_vars.end(); y_it++) {
+			ResourceID rId = y_it->first;
+			vector<IloNumVarArray> &ys = y_it->second;
+			vector<IloNumVarArray> &xs = my_x_vars[rId];
+			unsigned int my_req_num = myRes[rId]->requestNum;
+			double csLen = myRes[rId]->CSLength;
+
+			for (int u=0; u<my_proc_num; u++) {
+				for (int k=0; k<my_req_num; k++) {
+					obj += csLen * ys[u][k] * xs[u][k];
+				}
+			}
+		}
+		cout << "Finish building objective function" << endl;
+
+		model.add(IloMaximize(env, obj));
+		obj.end();
+		IloCplex cplex(model);
+
+		if (!cplex.solve()) {
+			env.error() << "Failed to optimize" << endl;
+			throw(-1);
+		} else {
+			cout << "SOLVE SUCCESSFULLY" << endl;
+		}
+		
+		cplex.exportModel("fifo.lp");
 	} catch (IloException &e) {
 		cerr << "Ilog concert exception: " << e << endl;
 	} catch (...) {

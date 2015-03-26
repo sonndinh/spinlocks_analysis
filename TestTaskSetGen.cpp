@@ -6,13 +6,15 @@ using namespace std;
 
 int main(int argc, char** argv) {
 	CriticalDuration cslen_type = Short;
-	const int TASKSET_NUM = 1000;
+	const int TASKSET_NUM = 1;
 	const int PROCNUM = 16;
+	const int RESOURCE_NUM = 3;
+	const int N_MAX = 4;
 	int success_count = 0;
 
 	/* Generate a bunch of task sets */
 	for (int i=0; i<TASKSET_NUM; i++) {
-		TaskSet* taskset = create_taskset(PROCNUM, 8, 5, cslen_type);
+		TaskSet* taskset = create_taskset(PROCNUM, RESOURCE_NUM, N_MAX, cslen_type);
 		bool ret = init_iteration(taskset, PROCNUM);
 		if (ret == true)
 			success_count++;

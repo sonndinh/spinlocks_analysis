@@ -67,6 +67,7 @@ Task* create_task(unsigned int m) {
 	/* Generate task utilization in range (1; sqrt(m)/3) 
 	 */
 	double min_ui = 1;
+	/* Be careful: if sqrt(m) <= 3, then max_ui is <= 1 */
 	double max_ui = sqrt(m)/3;
 	double mean_ui = (min_ui + max_ui)/2;
 	double stdev_ui = (min_ui + max_ui)/4;
@@ -82,7 +83,7 @@ Task* create_task(unsigned int m) {
 	//	cout << "Task parameters: <T, C, L, U>=<" << task->T << ", " << task->C 
 	//		 << ", " << task->L << ", " << task->U << ">" << endl;
 	//	cout << "Number of attempts for T: " << count1 << "; L: " << count2
-	//		 << "; U:" << count3 << endl;
+	//  		 << "; U:" << count3 << endl;
 	return task;
 }
 
