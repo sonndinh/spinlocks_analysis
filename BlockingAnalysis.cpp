@@ -183,18 +183,17 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 	cout << endl;
 #endif  // _ITER_DEBUG_
 
-
 	/* Solve the maximization of blocking */
 	IloEnv env;
 	try {
-		cout << "Start modeling..." << endl;
+		//		cout << "Start modeling..." << endl;
 		IloModel model(env);
 		IloRangeArray cons(env);
 		/* Variables table of requests from other tasks */
 		map<ResourceID, map<TaskID, IloNumVarArray> > x_vars;
 		map<ResourceID, map<TaskID, CSData> >::iterator iter = x_data.begin();
 
-		cout << "Start create variables for interfering tasks" << endl;
+		//		cout << "Start create variables for interfering tasks" << endl;
 		for (; iter != x_data.end(); iter++) {
 			ResourceID resId = iter->first;
 			/* Get an inner map for this resource ID */
@@ -208,15 +207,15 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 				 * to this resource
 				 */
 				unsigned int varNum = innerIter->second.requestNum;
-				IloNumVarArray x(env);				
+				IloNumVarArray x(env);
 				/* All x variables are in range [0,1] */
 				for (int i=0; i<varNum; i++) {
-					x.add(IloNumVar(env, 0.0, 1.0, ILOFLOAT));
+					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
 				}
 				innerMap.insert(std::pair<TaskID, IloNumVarArray>(taskId, x));
 			} /* Task */
 		} /* Resource */
-		cout << "Stop creating variables for interfering tasks" << endl;
+		//		cout << "Stop creating variables for interfering tasks" << endl;
 		
 		/* Populate data for my (tau_i's) y & x variables 
 		 * For my_y_vars: each element of a vector 
@@ -230,7 +229,7 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 		map<ResourceID, Resource*> &myRes = task->myResources;
 		map<ResourceID, Resource*>::iterator my_rit = myRes.begin();
 		
-		cout << "Start populating my variables" << endl;
+		//		cout << "Start populating my variables" << endl;
 		for (; my_rit != myRes.end(); my_rit++) {
 			ResourceID rId = my_rit->first;
 			unsigned int my_req_num = my_rit->second->requestNum;
@@ -241,20 +240,20 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 				IloNumVarArray x(env);
 				for (int k=0; k<my_req_num; k++) {
 					y.add(IloNumVar(env, 0, 1, ILOINT));
-					x.add(IloNumVar(env, 0.0, 1.0, ILOFLOAT));
+					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
 				}
 				ys.push_back(y);
 				xs.push_back(x);
 			}
 		}
-		cout << "Stop populating my variables" << endl;
+		//		cout << "Stop populating my variables" << endl;
 
 		/* Impose constraints */
 		/* Constraint 3: for each request to a resource, sum 
 		 * of corresponding y variables is at most 1
 		 * Constraint 2 then follows
 		 */
-		cout << "Start imposing constraint 3" << endl;
+		//		cout << "Start imposing constraint 3" << endl;
 		map<ResourceID, vector<IloNumVarArray> >::iterator y_it = my_y_vars.begin();
 		for (; y_it != my_y_vars.end(); y_it++) {
 			ResourceID rId = y_it->first;			
@@ -269,12 +268,12 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 				expr.end(); /* Important: must free it */
 			}
 		} /* End constraint 3 */
-		cout << "End imposing constraint 3" << endl;
+		//		cout << "End imposing constraint 3" << endl;
 		
 		/* Constraint 5: products of mismatched y and x variables 
 		 * are all zero
 		 */
-		cout << "Start imposing constraints 5 and 6" << endl;
+		//		cout << "Start imposing constraints 5 and 6" << endl;
 		y_it = my_y_vars.begin();
 		for (; y_it != my_y_vars.end(); y_it++) {
 			ResourceID rId = y_it->first;
@@ -306,14 +305,13 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 			cons.add(expr <= 0);
 			expr.end();
 		} /* End constraints 5 & 6 */
-		cout << "Stop imposing constraints 5 and 6" << endl;
+		//		cout << "Stop imposing constraints 5 and 6" << endl;
 
 		/* Constraint 8 (FIFO): at most 1 request from each other
 		 * processor can block me
 		 */
-		cout << "Start imposing constraint 8" << endl;
-		map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = 
-			x_vars.begin();
+		//		cout << "Start imposing constraint 8" << endl;
+		map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = x_vars.begin();
 		for (; inter_it != x_vars.end(); inter_it++) {
 			ResourceID rId = inter_it->first;
 			map<TaskID, IloNumVarArray> &others = inter_it->second;
@@ -336,13 +334,36 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 				expr.end();
 			}
 		}
-		cout << "Stop imposing constraint 8" << endl;
+
+		y_it = my_y_vars.begin();
+		for (; y_it != my_y_vars.end(); y_it++) {
+			ResourceID rId = y_it->first;
+			unsigned int my_request_num = myRes[rId]->requestNum;
+			vector<IloNumVarArray> &ys = y_it->second;
+			vector<IloNumVarArray> &xs = my_x_vars[rId];
+			assert(my_proc_num == ys.size());
+			IloExpr rhs(env);
+			for (int i=0; i<my_request_num; i++) {
+				rhs += ys[0][i];
+			}
+
+			for (int i=1; i<my_proc_num; i++) {
+				IloExpr lhs(env);
+				for (int j=0; j<my_request_num; j++) {
+					lhs += ys[i][j] * xs[i][j];
+				}
+				cons.add(lhs - rhs <= 0);
+				lhs.end();
+			}
+			rhs.end();
+		}
+		//		cout << "Stop imposing constraint 8" << endl;
 		
 		/* Add constraints to Cplex model */
 		model.add(cons);
 
 		/* Objective function */
-		cout << "Building objective function" << endl;
+		//		cout << "Building objective function" << endl;
 		IloExpr obj(env);
 		inter_it = x_vars.begin();
 		for (; inter_it != x_vars.end(); inter_it++) {
@@ -373,7 +394,7 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 				}
 			}
 		}
-		cout << "Finish building objective function" << endl;
+		//		cout << "Finish building objective function" << endl;
 
 		model.add(IloMaximize(env, obj));
 		obj.end();
@@ -385,14 +406,18 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 		} else {
 			cout << "SOLVE SUCCESSFULLY" << endl;
 		}
-		
+
+		env.out() << "Solution status = " << cplex.getStatus() << endl;
+		env.out() << "Solution value  = " << cplex.getObjValue() << endl;
+
 		cplex.exportModel("fifo.lp");
 	} catch (IloException &e) {
 		cerr << "Ilog concert exception: " << e << endl;
 	} catch (...) {
-		cerr << "Unknown exception!" << endl;
+		cerr << "Unknown exception: " << endl;
 	}
 
+	cout << endl;
 	env.end();
 }
 
