@@ -146,8 +146,7 @@ void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_var
 							map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
 							Task *task, IloModel &model, IloEnv &env);
 
-void call_optimizer_fifo(Task *task, TaskSet *tset, 
-					map<ResourceID, map<TaskID, CSData> > &x_data);
+void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data);
 
 /* Update task's blocking time, #processors, and response time 
  * based on results from the previous iteration.
@@ -205,11 +204,10 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 #endif  // _ITER_DEBUG_
 
 	// Call the optimizer to solve the maximum blocking time
-	call_optimizer_fifo(task, taskset, x_data);
+	call_optimizer_fifo(task, x_data);
 }
 
-void call_optimizer_fifo(Task *task, TaskSet * tset, 
-					map<ResourceID, map<TaskID, CSData> > &x_data) {
+void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data) {
 	/* Solve the maximization of blocking */
 	IloEnv env;
 	try {
@@ -275,166 +273,23 @@ void call_optimizer_fifo(Task *task, TaskSet * tset,
 		}
 		//		cout << "Stop populating my variables" << endl;
 
-		/* Impose constraints */
-		/* Constraint 3: for each request to a resource, sum 
-		 * of corresponding y variables is at most 1
-		 * Constraint 2 then follows
-		 */
-		//		cout << "Start imposing constraint 3" << endl;
+		/* Constraint 3: sum of each y column is <= 1 */
 		add_generic_contraint_sum_of_y_for_each_request(my_y_vars, cons, task, env);
 
-		//		map<ResourceID, vector<IloNumVarArray> >::iterator y_it = my_y_vars.begin();
-		//		vector<ResourceID, Resource*> &myRes = task->myResources;
-		//		for (; y_it != my_y_vars.end(); y_it++) {
-		//			ResourceID rId = y_it->first;			
-		//			vector<IloNumVarArray> &var_arrays = y_it->second;
-		//			unsigned int req_num = myRes[rId]->requestNum;
-		//			for (int k=0; k<req_num; k++) {
-		//				IloExpr expr(env);
-		//				for (int u=0; u<my_proc_num; u++) {
-		//					expr += var_arrays[u][k];
-		//				}
-		//				cons.add(expr <= 1);
-		//				expr.end(); /* Important: must free it */
-		//			}
-		//		} /* End constraint 3 */
-		//		cout << "End imposing constraint 3" << endl;
-		
-		/* Constraint 5: products of mismatched y and x variables 
-		 * are all zero
-		 */
-		//		cout << "Start imposing constraints 5 and 6" << endl;
+		/* Constraint 5: mismatched product of y&x is zero */
 		add_generic_constraint_rule_out_mismatched_x_and_y(my_y_vars, my_x_vars, cons, task, env);
-		//		map<ResourceID, vector<IloNumVarArray> >::iterator y_it = my_y_vars.begin();
-		//		vector<ResourceID, Resource*> &myRes = task->myResources;
-		//		for (; y_it != my_y_vars.end(); y_it++) {
-		//			ResourceID rId = y_it->first;
-		//			vector<IloNumVarArray> &ys = y_it->second;
-		//			vector<IloNumVarArray> &xs = my_x_vars[rId];
-		//			unsigned int req_num = myRes[rId]->requestNum;
-		//			for (int yi=0; yi<my_proc_num; yi++) {
-		//				for (int xi=0; xi<my_proc_num; xi++) {
-		//					if (yi == xi)
-		//						continue;
 
-		//					IloExpr expr(env);
-		//					for (int k=0; k<req_num; k++) {
-		//						expr += ys[yi][k] * xs[xi][k];
-		//					}
-		//					cons.add(expr <= 0);
-		//					expr.end();
-		//				}
-		//			}
-
-		//			/* Constraint 6: requests from me cannot block me 
-		//			 * (processor under consideration is the first 
-		//			 * processor of tau_i)
-		//			 */
-		//			IloExpr expr(env);
-		//			for (int k=0; k<req_num; k++) {
-		//				expr += ys[0][k] * xs[0][k];
-		//			}
-		//			cons.add(expr <= 0);
-		//			expr.end();
-		//		} /* End constraints 5 & 6 */
-		//		cout << "Stop imposing constraints 5 and 6" << endl;
-
-		/* Constraint 8 (FIFO): at most 1 request from each other
-		 * processor can block me
-		 */
-		//		cout << "Start imposing constraint 8" << endl;
+		/* Constraint 8: at most 1 request from each other processor of another task block me */
 		add_fifo_constraint_other_tasks(x_vars, x_data, my_y_vars, cons, task, env);
 
-		//		map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = x_vars.begin();
-		//		for (; inter_it != x_vars.end(); inter_it++) {
-		//			ResourceID rId = inter_it->first;
-		//			map<TaskID, IloNumVarArray> &others = inter_it->second;
-		//			map<TaskID, IloNumVarArray>::iterator others_it = others.begin();
-		//			for (; others_it != others.end(); others_it++) {
-		//				TaskID tId = others_it->first;
-		//				IloNumVarArray &x = others_it->second;
-		//				IloExpr expr(env);
-		//				unsigned int his_request_num = x_data[rId][tId].requestNum;
-		//				int his_proc_num = x_data[rId][tId].procNum;
-		//				for (int k=0; k<his_request_num; k++) {
-		//					expr += x[k];
-		//				}
-		//				vector<IloNumVarArray> &my_ys = my_y_vars[rId];
-		//				unsigned int my_request_num = myRes[rId]->requestNum;
-		//				for (int i=0; i<my_request_num; i++) {
-		//					expr -= his_proc_num * my_ys[0][i];
-		//				}
-		//						cons.add(expr <= 0);
-		//				expr.end();
-		//			}
-		//		}
-
+		/* Constraint 9: doing the same for other processors in the same task */
 		add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
-		
-		//		y_it = my_y_vars.begin();
-		//		for (; y_it != my_y_vars.end(); y_it++) {
-		//			ResourceID rId = y_it->first;
-		//			unsigned int my_request_num = myRes[rId]->requestNum;
-		//			vector<IloNumVarArray> &ys = y_it->second;
-		//			vector<IloNumVarArray> &xs = my_x_vars[rId];
-		//			assert(my_proc_num == ys.size());
-		//			IloExpr rhs(env);
-		//			for (int i=0; i<my_request_num; i++) {
-		//				rhs += ys[0][i];
-		//			}
-
-		//			for (int i=1; i<my_proc_num; i++) {
-		//				IloExpr lhs(env);
-		//				for (int j=0; j<my_request_num; j++) {
-		//					lhs += ys[i][j] * xs[i][j];
-		//				}
-		//				cons.add(lhs - rhs <= 0);
-		//				lhs.end();
-		//			}
-		//			rhs.end();
-		//		}
-		//		cout << "Stop imposing constraint 8" << endl;
 		
 		/* Add constraints to Cplex model */
 		model.add(cons);
-
+		
+		/* Formulate the objective function & add obj function to Cplex model */
 		add_objective_function(x_vars, x_data, my_y_vars, my_x_vars, task, model, env);
-		/* Objective function */
-		//		cout << "Building objective function" << endl;
-		//		IloExpr obj(env);
-		//		map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = x_vars.begin();
-		//		for (; inter_it != x_vars.end(); inter_it++) {
-		//			ResourceID rId = inter_it->first;
-		//			map<TaskID, IloNumVarArray> &others = inter_it->second;
-		//			map<TaskID, IloNumVarArray>::iterator others_it = others.begin();
-		//			for (; others_it != others.end(); others_it++) {
-		//				TaskID tId = others_it->first;
-		//				double csLen = x_data[rId][tId].csLen;
-		//				unsigned int varNum = x_data[rId][tId].requestNum;
-		//				for (int i=0; i<varNum; i++) {
-		//					obj += csLen * others[tId][i];
-		//				}
-		//			}
-		//		}
-
-		//		y_it = my_y_vars.begin();
-		//		for (; y_it != my_y_vars.end(); y_it++) {
-		//			ResourceID rId = y_it->first;
-		//			vector<IloNumVarArray> &ys = y_it->second;
-		//			vector<IloNumVarArray> &xs = my_x_vars[rId];
-		//			unsigned int my_req_num = myRes[rId]->requestNum;
-		//			double csLen = myRes[rId]->CSLength;
-
-		//			for (int u=0; u<my_proc_num; u++) {
-		//				for (int k=0; k<my_req_num; k++) {
-		//					obj += csLen * ys[u][k] * xs[u][k];
-		//				}
-		//			}
-		//		}
-		//		cout << "Finish building objective function" << endl;
-
-		//		model.add(IloMaximize(env, obj));
-		//		obj.end();
 
 		IloCplex cplex(model);
 
@@ -448,7 +303,9 @@ void call_optimizer_fifo(Task *task, TaskSet * tset,
 		env.out() << "Solution status = " << cplex.getStatus() << endl;
 		env.out() << "Solution value  = " << cplex.getObjValue() << endl;
 
+		/* Export the model to this file */
 		cplex.exportModel("fifo.lp");
+
 	} catch (IloException &e) {
 		cerr << "Ilog concert exception: " << e << endl;
 	} catch (...) {
@@ -459,13 +316,13 @@ void call_optimizer_fifo(Task *task, TaskSet * tset,
 	env.end();
 }
 
-/* Impose constraints */
+
 /* Constraint 3: for each request to a resource, sum 
  * of corresponding y variables is at most 1
  * Constraint 2 then follows
  */
 void add_generic_contraint_sum_of_y_for_each_request(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
-												IloRangeArray &cons, Task *task, IloEnv &env) {	
+													 IloRangeArray &cons, Task *task, IloEnv &env) {	
 	//		cout << "Start imposing constraint 3" << endl;
 	unsigned int my_proc_num = task->procNum;
 	map<ResourceID, vector<IloNumVarArray> >::iterator y_it = my_y_vars.begin();
@@ -482,7 +339,7 @@ void add_generic_contraint_sum_of_y_for_each_request(map<ResourceID, vector<IloN
 			cons.add(expr <= 1);
 			expr.end(); /* Important: must free it */
 		}
-	} /* End constraint 3 */
+	}
 	//		cout << "End imposing constraint 3" << endl;
 }
 
@@ -490,8 +347,8 @@ void add_generic_contraint_sum_of_y_for_each_request(map<ResourceID, vector<IloN
  * are all zero
  */
 void add_generic_constraint_rule_out_mismatched_x_and_y(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
-												   map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
-												   IloRangeArray &cons, Task *task, IloEnv &env) {
+														map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
+														IloRangeArray &cons, Task *task, IloEnv &env) {
 	//		cout << "Start imposing constraints 5 and 6" << endl;
 	unsigned int my_proc_num = task->procNum;
 	map<ResourceID, vector<IloNumVarArray> >::iterator y_it = my_y_vars.begin();
@@ -525,7 +382,7 @@ void add_generic_constraint_rule_out_mismatched_x_and_y(map<ResourceID, vector<I
 		}
 		cons.add(expr <= 0);
 		expr.end();
-	} /* End constraints 5 & 6 */
+	}
 	//		cout << "Stop imposing constraints 5 and 6" << endl;
 }
 
@@ -534,9 +391,9 @@ void add_generic_constraint_rule_out_mismatched_x_and_y(map<ResourceID, vector<I
  * processor of another task can block a single request from me
  */
 void add_fifo_constraint_other_tasks(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars, 
-								map<ResourceID, map<TaskID, CSData> > &x_data, 
-								map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
-								IloRangeArray &cons, Task *task, IloEnv &env) {
+									 map<ResourceID, map<TaskID, CSData> > &x_data, 
+									 map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+									 IloRangeArray &cons, Task *task, IloEnv &env) {
 	//		cout << "Start imposing constraint 8 (for other tasks)" << endl;
 	map<ResourceID, Resource*> &myRes = task->myResources;
 	map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = x_vars.begin();
@@ -569,8 +426,8 @@ void add_fifo_constraint_other_tasks(map<ResourceID, map<TaskID, IloNumVarArray>
  * Constraint 8 (FIFO): for interference within myself
  */
 void add_fifo_constraint_myself(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
-						   map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
-						   IloRangeArray &cons, Task *task, IloEnv &env) {
+								map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
+								IloRangeArray &cons, Task *task, IloEnv &env) {
 	//	cout << "Start imposing constraint 8 (myself)" << endl;
 	unsigned int my_proc_num = task->procNum;
 	map<ResourceID, Resource*> &myRes = task->myResources;	
@@ -599,13 +456,14 @@ void add_fifo_constraint_myself(map<ResourceID, vector<IloNumVarArray> > &my_y_v
 	//		cout << "Stop imposing constraint 8 (myself)" << endl;
 }
 
-
+/*
+ * Build objective function for the blocking time
+ */
 void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars, 
-					   map<ResourceID, map<TaskID, CSData> > &x_data, 
-					   map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
-					   map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
-					   Task *task, IloModel &model, IloEnv &env) {
-	/* Objective function */
+							map<ResourceID, map<TaskID, CSData> > &x_data, 
+							map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+							map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
+							Task *task, IloModel &model, IloEnv &env) {
 	//		cout << "Building objective function" << endl;
 	IloExpr obj(env);
 	map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = x_vars.begin();
