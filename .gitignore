@@ -1,0 +1,8 @@
+*.o
+*~
+*.lp
+test/test_prng
+test/test_miqcp
+test/*.o
+test/*~
+test/*.lp
