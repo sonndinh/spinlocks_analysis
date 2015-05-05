@@ -218,9 +218,12 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		map<ResourceID, map<TaskID, IloNumVarArray> > x_vars;
 		map<ResourceID, map<TaskID, CSData> >::iterator iter = x_data.begin();
 
-		//		cout << "Start create variables for interfering tasks" << endl;
+		cout << "TaskID: " << task->taskID << ", #Resources: " << x_data.size() << endl;
+
+		cout << "Start create variables for interfering tasks" << endl;
 		for (; iter != x_data.end(); iter++) {
 			ResourceID resId = iter->first;
+			cout << "Resource ID: " << resId << endl;
 			/* Get an inner map for this resource ID */
 			map<TaskID, IloNumVarArray> &innerMap = x_vars[resId];
 			map<TaskID, CSData> &taskData = iter->second;
@@ -235,12 +238,15 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 				IloNumVarArray x(env);
 				/* All x variables are in range [0,1] */
 				for (int i=0; i<varNum; i++) {
+					// Trick: Use a very small number (instead of 0) for lower bound of x vars
 					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
+					// Use 0 as lower bound of x vars
+					//					x.add(IloNumVar(env, 0, 1.0, ILOFLOAT));
 				}
 				innerMap.insert(std::pair<TaskID, IloNumVarArray>(taskId, x));
 			} /* Task */
 		} /* Resource */
-		//		cout << "Stop creating variables for interfering tasks" << endl;
+		cout << "Stop creating variables for interfering tasks" << endl;
 		
 		/* Populate data for my (tau_i's) y & x variables 
 		 * For my_y_vars: each element of a vector 
@@ -254,9 +260,10 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		map<ResourceID, Resource*> &myRes = task->myResources;
 		map<ResourceID, Resource*>::iterator my_rit = myRes.begin();
 		
-		//		cout << "Start populating my variables" << endl;
+		cout << "Start populating my variables" << endl;
 		for (; my_rit != myRes.end(); my_rit++) {
 			ResourceID rId = my_rit->first;
+			cout << "Resource ID: " << rId << endl;
 			unsigned int my_req_num = my_rit->second->requestNum;
 			vector<IloNumVarArray> &ys = my_y_vars[rId];
 			vector<IloNumVarArray> &xs = my_x_vars[rId];
@@ -265,13 +272,16 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 				IloNumVarArray x(env);
 				for (int k=0; k<my_req_num; k++) {
 					y.add(IloNumVar(env, 0, 1, ILOINT));
+					// Trick: use a very small number for lower bound of x vars
 					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
+					// Use 0 as lower bound of x vars
+					//					x.add(IloNumVar(env, 0, 1.0, ILOFLOAT));
 				}
 				ys.push_back(y);
 				xs.push_back(x);
 			}
 		}
-		//		cout << "Stop populating my variables" << endl;
+		cout << "Stop populating my variables" << endl;
 
 		/* Constraint 3: sum of each y column is <= 1 */
 		add_generic_contraint_sum_of_y_for_each_request(my_y_vars, cons, task, env);
@@ -280,10 +290,10 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		add_generic_constraint_rule_out_mismatched_x_and_y(my_y_vars, my_x_vars, cons, task, env);
 
 		/* Constraint 8: at most 1 request from each other processor of another task block me */
-		add_fifo_constraint_other_tasks(x_vars, x_data, my_y_vars, cons, task, env);
+		//		add_fifo_constraint_other_tasks(x_vars, x_data, my_y_vars, cons, task, env);
 
 		/* Constraint 9: doing the same for other processors in the same task */
-		add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
+		//		add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
 		
 		/* Add constraints to Cplex model */
 		model.add(cons);
@@ -302,6 +312,41 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 
 		env.out() << "Solution status = " << cplex.getStatus() << endl;
 		env.out() << "Solution value  = " << cplex.getObjValue() << endl;
+
+		/* Print out variables' values */
+		for (map<ResourceID, map<TaskID, IloNumVarArray> >::iterator it = x_vars.begin(); 
+			 it != x_vars.end(); it++) {
+			ResourceID rid = it->first;
+			map<TaskID, IloNumVarArray> &inner_map = it->second;
+			env.out() << "Inteferences from other tasks for resource ID " << rid << ": " << endl;
+
+			for (map<TaskID, IloNumVarArray>::iterator inner_it = inner_map.begin();
+				 inner_it != inner_map.end(); inner_it++) {
+				TaskID tid = inner_it->first;
+				IloNumVarArray &var_array = inner_it->second;
+				IloNumArray val_array(env);
+				cplex.getValues(val_array, var_array);
+				env.out() << "Task ID " << tid << ": " << val_array << endl;
+			}
+		}
+
+		for (map<ResourceID, vector<IloNumVarArray> >::iterator it = my_y_vars.begin();
+			 it != my_y_vars.end(); it++) {
+			ResourceID rid = it->first;
+			vector<IloNumVarArray> &y_matrix = it->second;
+			vector<IloNumVarArray> &x_matrix = my_x_vars[rid];
+			env.out() << "Variables for resource ID: " << rid << endl;
+
+			for (int i=0; i<y_matrix.size(); i++) {
+				IloNumVarArray &y_row = y_matrix[i];
+				IloNumVarArray &x_col = x_matrix[i];
+				IloNumArray y_vals(env);
+				IloNumArray x_vals(env);
+				cplex.getValues(y_vals, y_row);
+				cplex.getValues(x_vals, x_col);
+				env.out() << "Processor #" << i << ": Ys = " << y_vals << "; Xs = " << x_vals << endl;
+			}
+		}
 
 		/* Export the model to this file */
 		cplex.exportModel("fifo.lp");
@@ -336,6 +381,7 @@ void add_generic_contraint_sum_of_y_for_each_request(map<ResourceID, vector<IloN
 			for (int u=0; u<my_proc_num; u++) {
 				expr += var_arrays[u][k];
 			}
+			//			cons.add(1 <= expr <= 1);
 			cons.add(expr <= 1);
 			expr.end(); /* Important: must free it */
 		}
@@ -464,7 +510,7 @@ void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_var
 							map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
 							map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
 							Task *task, IloModel &model, IloEnv &env) {
-	//		cout << "Building objective function" << endl;
+	//	cout << "Start building objective function" << endl;
 	IloExpr obj(env);
 	map<ResourceID, map<TaskID, IloNumVarArray> >::iterator inter_it = x_vars.begin();
 	for (; inter_it != x_vars.end(); inter_it++) {

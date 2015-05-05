@@ -3,6 +3,7 @@
 #include <random>
 #include <map>
 #include <algorithm>
+
 #define _CXX_11_
 #ifdef _CXX_11_
 #include <chrono>
@@ -13,6 +14,12 @@
 
 using namespace std;
 
+unsigned int seed = 5;
+unsigned int get_seed() {
+	return seed++;
+}
+
+#if 0
 unsigned int get_seed() {
 #ifdef _CXX_11_
 	unsigned int seed = chrono::system_clock::now().time_since_epoch().count();
@@ -23,6 +30,7 @@ unsigned int get_seed() {
 #endif
 	return seed;
 }
+#endif
 
 /* Resource sharing factor */
 double RSF[] = {0.2, 0.3, 0.5, 0.75};
@@ -80,10 +88,10 @@ Task* create_task(unsigned int m) {
 	task->U = u_i;
 	task->C = u_i*task->T;
 	
-	//	cout << "Task parameters: <T, C, L, U>=<" << task->T << ", " << task->C 
-	//		 << ", " << task->L << ", " << task->U << ">" << endl;
+	cout << "Task parameters: <T,C,L,U> == <" << task->T << ", " << task->C 
+		 << ", " << task->L << ", " << task->U << ">" << endl;
 	//	cout << "Number of attempts for T: " << count1 << "; L: " << count2
-	//  		 << "; U:" << count3 << endl;
+	//		 << "; U:" << count3 << endl;
 	return task;
 }
 
@@ -108,8 +116,8 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 		total_util += task->U;
 	}
 
-	//	cout << "Number of tasks: " << tset->tasks.size() << endl;
-	//	cout << "Total util: " << total_util << ". Max util: " << m/2 << endl;
+	cout << "Number of tasks: " << tset->tasks.size() << endl;
+	cout << "Total util: " << total_util << ". Max util: " << m/2 << endl;
 
 	unsigned int rsf_num = sizeof(RSF)/sizeof(RSF[0]);
 	unsigned int task_num = tset->tasks.size();
@@ -137,7 +145,7 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 		unsigned int rsf_idx = rangen() % rsf_num;
 		unsigned int dirty_task_num = (unsigned int)(RSF[rsf_idx]*task_num);
 		if (dirty_task_num == 1) dirty_task_num = 2;
-		//		cout << "Number of dirty tasks for resource " << i << ": " << dirty_task_num << endl;
+		cout << "Number of dirty tasks for resource " << i << ": " << dirty_task_num << endl;
 
 		vector<TaskID> dirty_tasks;
 		unsigned int count = 0;
@@ -151,7 +159,7 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 				dirty_tasks.push_back(dirty_task_id);
 			}
 			
-			//			cout << "Picked task: " << dirty_task_id << endl;
+			//cout << "Picked task: " << dirty_task_id << endl;
 			Resource* res = new Resource();
 			res->resourceID = i;
 			res->requestNum = rangen() % Nmax + 1;
@@ -161,8 +169,8 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 			}
 			
 			tset->tasks[dirty_task_id]->myResources.insert(std::pair<ResourceID, Resource*>(i, res));
-			//			cout << "Task: " << dirty_task_id << " == <" << i << "," << res->CSLength 
-			//				 << "," << res->requestNum << ">" << endl;
+			cout << "Task ID: " << dirty_task_id << " == <ResourceID: " << i << ", CSlen: " << res->CSLength 
+				 << ", ReqNum: " << res->requestNum << ">" << endl;
 		}
 	}
 

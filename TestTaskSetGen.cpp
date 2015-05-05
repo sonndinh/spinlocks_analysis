@@ -32,8 +32,11 @@ int main(int argc, char** argv) {
 		map<TaskID, Task*> &tset = taskset->tasks;
 		map<TaskID, Task*>::iterator it = tset.begin();
 		for (; it!=tset.end(); it++) {
-			task_analysis(it->second, taskset, PROCNUM);
-			break;
+			//			if (it->first == 2) {
+				// test task 2 only
+				task_analysis(it->second, taskset, PROCNUM);
+				//	break;
+				//			}
 		}
 	}
 
