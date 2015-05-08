@@ -56,6 +56,8 @@ typedef struct Task {
 	double B1; // worst-case blocking time on 1 processor, in microsecond
 	unsigned int procNum; // number of processors allocated
 	double R; // response time, in microsecond
+
+	bool converged; // true if the task parameters have converged
 	
 	/* Other tasks access to the same resources */
 	map<ResourceID, vector<TaskID>*> interferences;

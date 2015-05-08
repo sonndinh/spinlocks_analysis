@@ -2,7 +2,9 @@
 #include <iostream>
 #include <ilcplex/ilocplex.h>
 #include "BlockingAnalysis.h"
-
+#include <scip/scip.h>
+#include <scip/scipdefplugins.h>
+	
 ILOSTLBEGIN
 
 /* Update number of processors allocated */
@@ -31,6 +33,7 @@ bool init_iteration(TaskSet* taskset, unsigned int m) {
 		task->B1 = 0;
 		task->procNum = alloc_proc(task->C, task->L, task->T, 0, 0);
 		task->R = response_time(task->C, task->L, task->procNum, 0, 0);
+		task->converged = false;
 		
 		// Update interferences for this task
 		map<ResourceID, vector<TaskID>*> &interferences = task->interferences;
@@ -146,12 +149,12 @@ void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_var
 							map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
 							Task *task, IloModel &model, IloEnv &env);
 
-void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data);
+void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data, SCIP_Real *max_blocking);
 
 /* Update task's blocking time, #processors, and response time 
  * based on results from the previous iteration.
  */
-void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
+void task_analysis(Task* task, TaskSet* taskset, unsigned int m, SCIP_Real *max_blocking) {
 	TaskID myId = task->taskID;
 	TaskID r_i = task->R;
 	map<ResourceID, vector<TaskID>*> &interferences = task->interferences;
@@ -204,10 +207,14 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m) {
 #endif  // _ITER_DEBUG_
 
 	// Call the optimizer to solve the maximum blocking time
-	call_optimizer_fifo(task, x_data);
+	SCIP_Real max_blk;
+	call_optimizer_fifo(task, x_data, &max_blk);
+	*max_blocking = max_blk;
 }
 
-void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data) {
+SCIP_RETCODE optimize(string fname, SCIP_Real *obj_value);
+
+void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data, SCIP_Real *blocking) {
 	/* Solve the maximization of blocking */
 	IloEnv env;
 	try {
@@ -218,12 +225,12 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		map<ResourceID, map<TaskID, IloNumVarArray> > x_vars;
 		map<ResourceID, map<TaskID, CSData> >::iterator iter = x_data.begin();
 
-		cout << "TaskID: " << task->taskID << ", #Resources: " << x_data.size() << endl;
+		//		cout << "TaskID: " << task->taskID << ", #Resources: " << x_data.size() << endl;
 
-		cout << "Start create variables for interfering tasks" << endl;
+		//		cout << "Start create variables for interfering tasks" << endl;
 		for (; iter != x_data.end(); iter++) {
 			ResourceID resId = iter->first;
-			cout << "Resource ID: " << resId << endl;
+			//			cout << "Resource ID: " << resId << endl;
 			/* Get an inner map for this resource ID */
 			map<TaskID, IloNumVarArray> &innerMap = x_vars[resId];
 			map<TaskID, CSData> &taskData = iter->second;
@@ -239,14 +246,14 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 				/* All x variables are in range [0,1] */
 				for (int i=0; i<varNum; i++) {
 					// Trick: Use a very small number (instead of 0) for lower bound of x vars
-					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
+					//					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
 					// Use 0 as lower bound of x vars
-					//					x.add(IloNumVar(env, 0, 1.0, ILOFLOAT));
+					x.add(IloNumVar(env, 0, 1.0, ILOFLOAT));
 				}
 				innerMap.insert(std::pair<TaskID, IloNumVarArray>(taskId, x));
 			} /* Task */
 		} /* Resource */
-		cout << "Stop creating variables for interfering tasks" << endl;
+		//		cout << "Stop creating variables for interfering tasks" << endl;
 		
 		/* Populate data for my (tau_i's) y & x variables 
 		 * For my_y_vars: each element of a vector 
@@ -260,10 +267,10 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		map<ResourceID, Resource*> &myRes = task->myResources;
 		map<ResourceID, Resource*>::iterator my_rit = myRes.begin();
 		
-		cout << "Start populating my variables" << endl;
+		//		cout << "Start populating my variables" << endl;
 		for (; my_rit != myRes.end(); my_rit++) {
 			ResourceID rId = my_rit->first;
-			cout << "Resource ID: " << rId << endl;
+			//			cout << "Resource ID: " << rId << endl;
 			unsigned int my_req_num = my_rit->second->requestNum;
 			vector<IloNumVarArray> &ys = my_y_vars[rId];
 			vector<IloNumVarArray> &xs = my_x_vars[rId];
@@ -273,15 +280,15 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 				for (int k=0; k<my_req_num; k++) {
 					y.add(IloNumVar(env, 0, 1, ILOINT));
 					// Trick: use a very small number for lower bound of x vars
-					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
+					//					x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
 					// Use 0 as lower bound of x vars
-					//					x.add(IloNumVar(env, 0, 1.0, ILOFLOAT));
+					x.add(IloNumVar(env, 0, 1.0, ILOFLOAT));
 				}
 				ys.push_back(y);
 				xs.push_back(x);
 			}
 		}
-		cout << "Stop populating my variables" << endl;
+		//		cout << "Stop populating my variables" << endl;
 
 		/* Constraint 3: sum of each y column is <= 1 */
 		add_generic_contraint_sum_of_y_for_each_request(my_y_vars, cons, task, env);
@@ -290,10 +297,10 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		add_generic_constraint_rule_out_mismatched_x_and_y(my_y_vars, my_x_vars, cons, task, env);
 
 		/* Constraint 8: at most 1 request from each other processor of another task block me */
-		//		add_fifo_constraint_other_tasks(x_vars, x_data, my_y_vars, cons, task, env);
+		add_fifo_constraint_other_tasks(x_vars, x_data, my_y_vars, cons, task, env);
 
 		/* Constraint 9: doing the same for other processors in the same task */
-		//		add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
+		add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
 		
 		/* Add constraints to Cplex model */
 		model.add(cons);
@@ -303,6 +310,29 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 
 		IloCplex cplex(model);
 
+		// disable output to stdout
+		cplex.setOut(env.getNullStream());
+
+		// create file name
+		TaskID task_id = task->taskID;
+		string file_name;
+		stringstream ss;
+		ss << "tmp/fifo_" << task_id << ".lp";
+		file_name = ss.str();
+
+		// export to .lp file
+		cplex.exportModel(file_name.c_str());
+		
+		SCIP_Real sol_val;
+		// SCIP read & solve input from the .lp file
+		SCIP_RETCODE retcode = optimize(file_name, &sol_val);
+		if (retcode != SCIP_OKAY) {
+			SCIPprintError(retcode);
+			exit(-1);
+		}
+		*blocking = sol_val;
+
+		/*
 		if (!cplex.solve()) {
 			env.error() << "Failed to optimize" << endl;
 			throw(-1);
@@ -313,7 +343,7 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		env.out() << "Solution status = " << cplex.getStatus() << endl;
 		env.out() << "Solution value  = " << cplex.getObjValue() << endl;
 
-		/* Print out variables' values */
+		/* Print out variables' values * /
 		for (map<ResourceID, map<TaskID, IloNumVarArray> >::iterator it = x_vars.begin(); 
 			 it != x_vars.end(); it++) {
 			ResourceID rid = it->first;
@@ -347,9 +377,10 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 				env.out() << "Processor #" << i << ": Ys = " << y_vals << "; Xs = " << x_vals << endl;
 			}
 		}
+		*/
 
 		/* Export the model to this file */
-		cplex.exportModel("fifo.lp");
+		//		cplex.exportModel("fifo.lp");
 
 	} catch (IloException &e) {
 		cerr << "Ilog concert exception: " << e << endl;
@@ -361,6 +392,34 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 	env.end();
 }
 
+SCIP_RETCODE optimize(string fname, SCIP_Real *obj_value) {
+	const char* file_name= fname.c_str();
+	SCIP *scip = NULL;
+	SCIP_CALL( SCIPcreate(&scip) );
+	
+	// load default plugins
+	SCIP_CALL( SCIPincludeDefaultPlugins(scip) );
+	
+	// disable output to stdout
+	SCIP_CALL( SCIPsetMessagehdlr(scip, NULL) );
+	
+	SCIP_CALL( SCIPreadProb(scip, file_name, NULL) );
+	
+	//	std::cout << "Solving problem" << std::endl;
+	SCIP_CALL( SCIPsolve(scip) );
+	
+	// get best solution
+	SCIP_Real obj_val = SCIPgetPrimalbound(scip);
+	//	std::cout << "Best solution for the problem: " << std::endl;
+	std::cout << "Objective value: " << obj_val << std::endl;
+
+	*obj_value = obj_val;
+	
+	SCIP_CALL( SCIPfree(&scip) );
+	
+	BMScheckEmptyMemory();
+	return SCIP_OKAY;
+}
 
 /* Constraint 3: for each request to a resource, sum 
  * of corresponding y variables is at most 1
@@ -549,8 +608,63 @@ void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_var
 	//		cout << "Finish building objective function" << endl;
 }
 
-void blocking_analysis(TaskSet* tset) {
+
+#define _SENSITIVITY_ 500
+/**
+ * Doing schelability analysis for a task set
+ * Return true if it is schedulable, false otherwise
+ */
+bool blocking_analysis(TaskSet* tset, unsigned int m) {
+	map<TaskID, Task*> &taskset = tset->tasks;
+	map<TaskID, Task*>::iterator it = taskset.begin();
 	
+	SCIP_Real blocking;
+	while (true) {
+		for (; it != taskset.end(); it++) {
+			Task* task = it->second;
+			if (task->converged == true)
+				continue;
+			
+			task_analysis(task, tset, m, &blocking);
+			double total_blk = blocking * task->procNum;
+			unsigned int processor_num = alloc_proc(task->C, task->L, task->T, total_blk, blocking);
+			double resp_time = response_time(task->C, task->L, processor_num, total_blk, blocking);
+
+			// if the new response time is larger than deadline, task set is unschedulable
+			if (resp_time > task->T)
+				return false;
+
+			double old_response_time = task->R;
+			
+			// if the response time does not change, the task is converged
+			if ( fabs(resp_time - old_response_time) < _SENSITIVITY_ ) 
+				task->converged = true;
+
+			// update task information
+			task->B1 = blocking;
+			task->procNum = processor_num;
+			task->R = resp_time;
+		}
+
+		unsigned int total_processors_allocated = 0;
+		it = taskset.begin();
+		for (; it != taskset.end(); it++) {
+			total_processors_allocated += it->second->procNum;
+		}
+
+		// if the total number of processors allocated so far is more than m, task set is unschedulable
+		if (total_processors_allocated > m)
+			return false;
+
+		bool all_converged = true;
+		it = taskset.begin();
+		for (; it != taskset.end(); it++) {
+			all_converged &= it->second->converged;
+		}
+		
+		if (all_converged)
+			return true;
+	}
 }
 
 

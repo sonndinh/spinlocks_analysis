@@ -14,12 +14,14 @@
 
 using namespace std;
 
+#define _DEBUG_DETERMINISTIC_
+#ifdef _DEBUG_DETERMINISTIC_
 unsigned int seed = 5;
 unsigned int get_seed() {
 	return seed++;
 }
 
-#if 0
+#else
 unsigned int get_seed() {
 #ifdef _CXX_11_
 	unsigned int seed = chrono::system_clock::now().time_since_epoch().count();
@@ -27,10 +29,10 @@ unsigned int get_seed() {
 	timeval time;
 	gettimeofday(&time, NULL);
 	unsigned int seed = time.tv_sec*1000000 + time.tv_usec;
-#endif
+#endif // _CXX_11_
 	return seed;
 }
-#endif
+#endif // _DEBUG_DETERMINISTIC_
 
 /* Resource sharing factor */
 double RSF[] = {0.2, 0.3, 0.5, 0.75};
@@ -88,8 +90,8 @@ Task* create_task(unsigned int m) {
 	task->U = u_i;
 	task->C = u_i*task->T;
 	
-	cout << "Task parameters: <T,C,L,U> == <" << task->T << ", " << task->C 
-		 << ", " << task->L << ", " << task->U << ">" << endl;
+	//	cout << "Task parameters: <T,C,L,U> == <" << task->T << ", " << task->C 
+	//		 << ", " << task->L << ", " << task->U << ">" << endl;
 	//	cout << "Number of attempts for T: " << count1 << "; L: " << count2
 	//		 << "; U:" << count3 << endl;
 	return task;
@@ -116,8 +118,8 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 		total_util += task->U;
 	}
 
-	cout << "Number of tasks: " << tset->tasks.size() << endl;
-	cout << "Total util: " << total_util << ". Max util: " << m/2 << endl;
+	//	cout << "Number of tasks: " << tset->tasks.size() << endl;
+	//	cout << "Total util: " << total_util << ". Max util: " << m/2 << endl;
 
 	unsigned int rsf_num = sizeof(RSF)/sizeof(RSF[0]);
 	unsigned int task_num = tset->tasks.size();

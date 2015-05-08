@@ -47,6 +47,12 @@ Binaries
 
 static void populate(IloModel model, IloNumVarArray var, IloRangeArray con);
 
+/*
+ * Set up: we are calculating maximum blocking on a processor of task T2.
+ * Task T6 is the only task that interferes with T2 on resource ID 3.
+ * Task T2 has 2 processors and 4 requests to resource 3. Task 6 has 3 requests.
+ * We are maximizing the blocking on the first processor of T2.
+ */
 int main(int argc, char** argv) {
 	IloEnv env;
 	try {
@@ -57,6 +63,8 @@ int main(int argc, char** argv) {
 		populate(model, var, con);
 
 		IloCplex cplex(model);
+		cplex.exportModel("testmiqcp.lp");
+
 		if (!cplex.solve()) {
 			env.error() << "Failed to optimize" << endl;
 			throw(-1);
@@ -68,8 +76,6 @@ int main(int argc, char** argv) {
 		cplex.getValues(vals, var);
 		env.out() << "Vals: " << vals << endl;
 		
-		cplex.exportModel("testqcp.lp");
-
 	} catch (IloException &e) {
 		cerr << "Concert exception caught: " << e << endl;
 	} catch (...) {
@@ -79,6 +85,7 @@ int main(int argc, char** argv) {
 	env.end();
 	return 0;
 }
+
 
 static void populate(IloModel model, IloNumVarArray x, IloRangeArray c) {
 	IloEnv env = model.getEnv();
@@ -91,46 +98,50 @@ static void populate(IloModel model, IloNumVarArray x, IloRangeArray c) {
 	/* Add 11 real variables: x9 to x19 */
 	for (int i=0; i<11; i++) {
 		x.add(IloNumVar(env, 0.0, 1.0, ILOFLOAT));
-		//x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
+		//		x.add(IloNumVar(env, 1e-8, 1.0, ILOFLOAT));
+		//		x.add(IloNumVar(env, 0, 1, ILOINT));
 	}
 
 	/* Add x20 (not sure what it is used for) */
 	//	x.add(IloNumVar(env, 0.0, 0.0));
 
-	c.add(1 <= x[0] + x[1] <= 1);
-	c.add(1 <= x[2] + x[3] <= 1);
-	c.add(1 <= x[4] + x[5] <= 1);
-	c.add(1 <= x[6] + x[7] <= 1);
+	/* Bound of the sum of elements on each column of Y matrix */
+	c.add(x[0] + x[1] <= 1);
+	c.add(x[2] + x[3] <= 1);
+	c.add(x[4] + x[5] <= 1);
+	c.add(x[6] + x[7] <= 1);
 
-	c.add( -2*x[0] - 2*x[2] - 2*x[4] - 2*x[6] + 
-		   x[16] + x[17] + x[18] <= 0);
+	/* FIFO constraint for interference from other tasks */
+	c.add( -2*x[0] - 2*x[2] - 2*x[4] - 2*x[6] + x[16] + x[17] + x[18] <= 0);
 
-	/* q1 constraint: add (x*x - x) for each binary variable in an attempt to make 
+	/* 
+	 * q1 constraint: mismatched product of a row of Y with a column of X
+	 * Add (x*x - x) for each binary variable in an attempt to make 
 	 * it positive semi-definite 
 	 */
-	//	c.add(x[0]*x[11] + x[2]*x[10] + x[4]*x[9] + x[6]*x[8] <= 0);
+	c.add(x[0]*x[11] + x[2]*x[10] + x[4]*x[9] + x[6]*x[8] <= 0);
+
 	//	x[0]*x[0] - x[0] + x[2]*x[2] - x[2] + x[4]*x[4] - x[4] + x[6]*x[6] - x[6] +
 	//		x[1]*x[1] - x[1] + x[3]*x[3] - x[3] + x[5]*x[5] - x[5] + x[7]*x[7] - x[7] <= 0);
 
-	/* q2 constraint : get rid of mismatched combination
-	 */
-	//	c.add(x[1]*x[15] + x[3]*x[14] + x[5]*x[13] + x[7]*x[12] <= 0);
-		  //		  x[0]*x[0] - x[0] + x[2]*x[2] - x[2] + x[4]*x[4] - x[4] + x[6]*x[6] - x[6] +
-		  //		  x[1]*x[1] - x[1] + x[3]*x[3] - x[3] + x[5]*x[5] - x[5] + x[7]*x[7] - x[7] <= 0);
+	/* q2 constraint : another mismatched product */
+	c.add(x[1]*x[15] + x[3]*x[14] + x[5]*x[13] + x[7]*x[12] <= 0);
 
-	/* q3 constraint: get rid of mismatched combination
-	 */
-	//	c.add(x[0]*x[15] + x[2]*x[14] + x[4]*x[13] + x[6]*x[12] <= 0);
-		  //		  x[0]*x[0] - x[0] + x[2]*x[2] - x[2] + x[4]*x[4] - x[4] + x[6]*x[6] - x[6] +
-		  //		  x[1]*x[1] - x[1] + x[3]*x[3] - x[3] + x[5]*x[5] - x[5] + x[7]*x[7] - x[7] <= 0);
+	//		  x[0]*x[0] - x[0] + x[2]*x[2] - x[2] + x[4]*x[4] - x[4] + x[6]*x[6] - x[6] +
+	//		  x[1]*x[1] - x[1] + x[3]*x[3] - x[3] + x[5]*x[5] - x[5] + x[7]*x[7] - x[7] <= 0);
 
-	/* q4 constraint: fifo constraint for contention inside the task
-	 */
-	//	c.add( -x[0] - x[2] - x[4] - x[6] + x[1]*x[11] + x[3]*x[10] +
-	//		   x[5]*x[9] + x[7]*x[8] <=0);
+	/* q3 constraint: requests from me (processor 0) cannot block myself */
+	c.add(x[0]*x[15] + x[2]*x[14] + x[4]*x[13] + x[6]*x[12] <= 0);
+
+	//		  x[0]*x[0] - x[0] + x[2]*x[2] - x[2] + x[4]*x[4] - x[4] + x[6]*x[6] - x[6] +
+	//		  x[1]*x[1] - x[1] + x[3]*x[3] - x[3] + x[5]*x[5] - x[5] + x[7]*x[7] - x[7] <= 0);
+
+	/* q4 constraint: FIFO constraint for contention with other processors of T2 */
+	c.add( -x[0] - x[2] - x[4] - x[6] + x[1]*x[11] + x[3]*x[10] + x[5]*x[9] + x[7]*x[8] <=0);
 	
 	model.add(c);
 
+	/* Add objective function */
 	model.add(IloMaximize(env, 11*(x[16] + x[17] + x[18] + 
 								   x[0]*x[15] + x[1]*x[11] + 
 								   x[2]*x[14] + x[3]*x[10] +

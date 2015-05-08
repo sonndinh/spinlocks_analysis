@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
 	}
 	
 	CriticalDuration cslen_type = Short;
-	const int TASKSET_NUM = 1;
+	const int TASKSET_NUM = 10;
 	// Number of processors in the system, e.g 16, 32
 	const int PROCNUM = atoi(argv[1]);
 	// Number of shared resource in the task set, e.g 3, 5
@@ -22,6 +22,7 @@ int main(int argc, char** argv) {
 	const int N_MAX = atoi(argv[3]);
 	int success_count = 0;
 
+	unsigned int count_schedulable = 0;
 	/* Generate a bunch of task sets */
 	for (int i=0; i<TASKSET_NUM; i++) {
 		TaskSet* taskset = create_taskset(PROCNUM, RESOURCE_NUM, N_MAX, cslen_type);
@@ -29,6 +30,14 @@ int main(int argc, char** argv) {
 		if (ret == true)
 			success_count++;
 		
+		if( blocking_analysis(taskset, PROCNUM) ) {
+			cout << "Taskset is schedulable" << endl;
+			count_schedulable++;
+		} else {
+			cout << "Taskset is unschedulable" << endl;
+		}
+		
+		/*
 		map<TaskID, Task*> &tset = taskset->tasks;
 		map<TaskID, Task*>::iterator it = tset.begin();
 		for (; it!=tset.end(); it++) {
@@ -38,8 +47,10 @@ int main(int argc, char** argv) {
 				//	break;
 				//			}
 		}
+		*/
 	}
 
+	cout << "Percent of schedulable tasksets: " << (double) count_schedulable*100/TASKSET_NUM << "%" << endl;
 	//	cout << "Percent of success after initiating: " << (double)success_count*100/TASKSET_NUM << "%" << endl;
 	return 0;
 }
