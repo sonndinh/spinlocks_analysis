@@ -12,25 +12,32 @@ using namespace std;
 #define MEAN_TI 500
 #define STDEV_TI 200
 
-/* Parameters for short critical section (microsecond) */
+/**
+ * Parameters for short critical section (microseconds)
+ * Mean and standard deviation used only with normal distributions
+ */
 #define MIN_SHORT_CSLEN 1
 #define MAX_SHORT_CSLEN 15
 #define MEAN_SHORT_CSLEN 8
 #define STDEV_SHORT_CSLEN 4
 
-/* Parameters for long critical section (microsecond) */
-#define MIN_LONG_CSLEN 1
-#define MAX_LONG_CSLEN 100
+/* Parameters for moderate critical section (microseconds) */
+#define MIN_MODERATE_CSLEN 1
+#define MAX_MODERATE_CSLEN 100
 #define MEAN_LONG_CSLEN 50
 #define STDEV_LONG_CSLEN 30
+
+/* Parameters for long critical section (microseconds) */
+#define MIN_LONG_CSLEN 5
+#define MAX_LONG_CSLEN 1280
 
 /* Moved the definition of Resource sharing factor 
  * to .cpp file to conform to One Definition Rule
  */
 //double RSF[] = {0.2, 0.3, 0.5, 0.75};
 
-/* Type of critical section (short or long) */
-typedef enum {Short, Long} CriticalDuration;
+/* Type of critical section (short or moderate or long) */
+typedef enum {SHORT, MODERATE, LONG} CriticalDuration;
 
 typedef unsigned int ResourceID;
 typedef unsigned int TaskID;

@@ -9,18 +9,24 @@ ILOSTLBEGIN
 
 /* Update number of processors allocated */
 unsigned int alloc_proc(double C, double L, double D, double Bn, double B1) {
+	if (D < L+B1)
+		cout << "Denominator of equation for n_i is negative !!!" << endl;
+	else if (D == L+B1)
+		cout << "Denominator of equation for n_i is zero !!!" << endl;
+
+	cout << "New processor allocation: " << ceil(((C+Bn) - (L+B1))/(D - (L+B1))) << endl;
 	return ceil(((C+Bn) - (L+B1))/(D - (L+B1)));
 }
 
 /* Update bound of response time using blocking time, #processors */
 double response_time(double C, double L, unsigned int n, double Bn, double B1) {
-	double respTime = (C+Bn)/n + L + B1;
+	double respTime = (C+Bn-L-B1)/n + L + B1;
 	return ceil(respTime); // in microsecond
 }
 
 /* Initialize blocking time, #processors, response time 
  * Also, update "interferences" for each task in task set
- * Return: true, if task set are OK after initiating
+ * Return: true, if taskset are OK after initiating
  *         false, otherwise
  * (OK means total processors allocated to tasks < m AND 
  *  there is no task with Response time > Deadline)
@@ -60,12 +66,14 @@ bool init_iteration(TaskSet* taskset, unsigned int m) {
 	}
 
 
-	//#define _INIT_DEBUG_
-	//#define _INIT_VERBOSE_
+#define _INIT_DEBUG_
+#define _INIT_VERBOSE_
+
 #ifdef _INIT_DEBUG_
 	/* Debug: dump tasks information */
 	unsigned int total_proc = 0;
 	bool isOk = true;
+int number_tasks_fail = 0;
 	for (it=tset.begin(); it!=tset.end(); it++) {
 #ifdef _INIT_VERBOSE_
 		cout << "Task ID: " << it->second->taskID << endl;
@@ -79,8 +87,10 @@ bool init_iteration(TaskSet* taskset, unsigned int m) {
 #endif // _INIT_VERBOSE_
 		
 		total_proc += it->second->procNum;
-		if (it->second->R > it->second->T)
+		if (it->second->R > it->second->T) {
+			number_tasks_fail++;
 			isOk = false;
+		}
 		map<ResourceID, Resource*> &res = it->second->myResources;
 		map<ResourceID, Resource*>::iterator resIt = res.begin();
 #ifdef _INIT_VERBOSE_
@@ -89,11 +99,9 @@ bool init_iteration(TaskSet* taskset, unsigned int m) {
 			cout << resIt->first << " ";
 		}
 		cout << ")" << endl;
-#endif // _INIT_VERBOSE_
 
 		map<ResourceID, vector<TaskID>*> &interfe = it->second->interferences;
 		map<ResourceID, vector<TaskID>*>::iterator intIt = interfe.begin();
-#ifdef _INIT_VERBOSE_
 		cout << "Interference List ============= " << endl;
 		for (; intIt!=interfe.end(); intIt++) {
 			cout << "   For resource ID " << intIt->first << ": ";
@@ -108,7 +116,7 @@ bool init_iteration(TaskSet* taskset, unsigned int m) {
 	}
 	cout << "Total #processors: " << total_proc << endl;
 	if (total_proc > m || isOk == false) {
-		cout << "Task fail !!!" << endl;
+		cout << "#tasks fail: " << number_tasks_fail << "; Taskset fail !!!" << endl;
 		return false;
 	}
 	return true;
@@ -609,7 +617,7 @@ void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_var
 }
 
 
-#define _SENSITIVITY_ 500
+#define _SENSITIVITY_ 100
 /**
  * Doing schelability analysis for a task set
  * Return true if it is schedulable, false otherwise
@@ -618,10 +626,20 @@ bool blocking_analysis(TaskSet* tset, unsigned int m) {
 	map<TaskID, Task*> &taskset = tset->tasks;
 	map<TaskID, Task*>::iterator it = taskset.begin();
 	
+	int iter_num = 0;
 	SCIP_Real blocking;
 	while (true) {
-		for (; it != taskset.end(); it++) {
+		// Reset task set iterator
+		it = taskset.begin();
+		cout << "Iteration #" << iter_num << "XXXXXXXXXXXXXXXXXX" << endl;
+		for (; it != taskset.end(); it++) {			
 			Task* task = it->second;
+
+			// Debug: print task's parameters
+			cout << "Task " << task->taskID << ": Response time " << task->R 
+				 << "; convergence: " << task->converged << endl;
+			// End debugging
+
 			if (task->converged == true)
 				continue;
 			
@@ -629,10 +647,20 @@ bool blocking_analysis(TaskSet* tset, unsigned int m) {
 			double total_blk = blocking * task->procNum;
 			unsigned int processor_num = alloc_proc(task->C, task->L, task->T, total_blk, blocking);
 			double resp_time = response_time(task->C, task->L, processor_num, total_blk, blocking);
+			
+			// Debug: print total blocking, new processor number, new response time
+			cout << "New blocking: " << blocking << "; new #proc: " << processor_num 
+				 << "; new response time: " << resp_time << endl;
+			// End debugging
 
 			// if the new response time is larger than deadline, task set is unschedulable
-			if (resp_time > task->T)
+			if (resp_time > task->T) {
+				// Debug:
+				cout << "New response time " << resp_time << " > period " << task->T 
+					 << " ==> unschedulable" << endl;
+				// End debugging
 				return false;
+			}
 
 			double old_response_time = task->R;
 			
@@ -651,20 +679,76 @@ bool blocking_analysis(TaskSet* tset, unsigned int m) {
 		for (; it != taskset.end(); it++) {
 			total_processors_allocated += it->second->procNum;
 		}
-
+		
+		// Debug:
+		cout << "Total number of processors allocated: " << total_processors_allocated << endl;
+		// End debugging
+		
 		// if the total number of processors allocated so far is more than m, task set is unschedulable
-		if (total_processors_allocated > m)
+		if (total_processors_allocated > m) {
+			// Debug:
+			cout << "Not enough processors: m = " << m << " < " << total_processors_allocated << endl;
+			// End debugging
 			return false;
+		}
 
 		bool all_converged = true;
 		it = taskset.begin();
 		for (; it != taskset.end(); it++) {
 			all_converged &= it->second->converged;
+			if ( !all_converged )
+				break;
 		}
 		
 		if (all_converged)
 			return true;
+
+		// Debug: to keep track number of iterations
+		iter_num++;
 	}
+
+}
+
+
+/* For each task, fix its response time to its relative 
+ * deadline and calculate the number of processors allocated.
+ * If the total number of processors allocated to the taskset 
+ * is less than m, than it is schedulable (only sufficient condition).
+ */
+bool is_schedulable(TaskSet *tset, unsigned int m) {
+	map<TaskID, Task*> &taskset = tset->tasks;
+	map<TaskID, Task*>::iterator it = taskset.begin();
+
+	/* For all tasks, set their response times to relative deadline*/
+	for (; it != taskset.end(); it++) {
+		it->second->R = it->second->T;
+	}
+
+	unsigned int total_proc_num = 0;
+	SCIP_Real blocking;
+	it = taskset.begin();
+	for (; it != taskset.end(); it++) {
+		Task * task = it->second;
+		task_analysis(task, tset, m, &blocking);
+		
+		/* If D <= L + B1, this task cannot be schedulable */
+		if (task->T <= task->L + blocking) {
+			return false;
+		}
+		unsigned int proc_num = alloc_proc(task->C, task->L, task->T, 
+										   task->procNum*blocking, blocking);
+		
+		/* Update task's blocking bound, number of processors */
+		task->B1 = blocking;
+		task->procNum = proc_num;
+		total_proc_num += proc_num;
+	}
+	
+	cout << "New total processors allocated: " << total_proc_num << endl;
+	
+	if (total_proc_num <= m)
+		return true;
+	return false;
 }
 
 

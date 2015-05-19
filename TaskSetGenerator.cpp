@@ -35,13 +35,53 @@ unsigned int get_seed() {
 #endif // _DEBUG_DETERMINISTIC_
 
 /* Resource sharing factor */
-double RSF[] = {0.2, 0.3, 0.5, 0.75};
+double RSF[] = {0.1, 0.25, 0.4, 0.75};
+//double RSF[] = {0.2, 0.25, 0.3, 0.4};
 
+
+/**
+ * Generate a task with period, critical path length, utilization
+ * Use log-uniform distribution for period
+ */
+Task* create_task(unsigned int m) {
+    mt19937 num_gen(get_seed());
+	//	uniform_real_distribution<double> period_dist(MIN_TI, MAX_TI);
+	uniform_real_distribution<double> log_period_dist(log10(MIN_TI), log10(MAX_TI));	
+
+	Task *task = new Task();
+	/* Generate period */
+	//	double period = period_dist(num_gen);
+	double log_period = log_period_dist(num_gen);
+	double period = pow(10.0, log_period);
+	if (ceil(period*1000) > MAX_TI*1000)
+		task->T = floor(period*1000);
+	else 
+		task->T = ceil(period*1000);
+
+	/* Generate critical path length */
+	uniform_real_distribution<double> critical_path_dist(0.125, 0.25);
+	double critical_path_ratio = critical_path_dist(num_gen);
+	task->L = ceil(critical_path_ratio*task->T);
+
+	/* Generate utilization */
+	uniform_real_distribution<double> util_dist(1.25, sqrt(m));
+	task->U = util_dist(num_gen);
+	task->C = task->U * task->T;
+
+	/* Calculate initial number of processors */
+	task->procNum = ceil((task->C - task->L)/(task->T - task->L));
+	
+	cout << "Task parameters: <T,C,L,U> == <" << task->T << ", " << task->C 
+		 << ", " << task->L << ", " << task->U << ">; #processors: " << task->procNum << endl;
+	return task;
+}
+
+
+#if 0
 Task* create_task(unsigned int m) {
 	unsigned int seed = get_seed();
 	/* C++0x does not have knuth_b generator, but C++11 does */
 	knuth_b generator(seed);
-	//	minstd_rand generator(seed);
 	normal_distribution<double> period_dist(MEAN_TI, STDEV_TI);
 
 	int count1,count2,count3;
@@ -57,7 +97,8 @@ Task* create_task(unsigned int m) {
 	}
 	if (ceil(t_i*1000) > MAX_TI*1000) 
 		task->T = floor(t_i*1000);
-	task->T = ceil(t_i*1000);
+	else
+		task->T = ceil(t_i*1000);
 
 	/* Generate critical path length parameters:
 	 * max, min, mean, stdev (ms)
@@ -96,30 +137,37 @@ Task* create_task(unsigned int m) {
 	//		 << "; U:" << count3 << endl;
 	return task;
 }
+#endif
 
 
+/**
+ * Generate taskset with bounded total utilization
+ * Critical section lengths are generated with normal distributions
+ */
+#if 0
 TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int Nmax, 
 						CriticalDuration cslen_type) {
 	TaskSet* tset = new TaskSet();
 	double total_util = 0;
 
 	/* Add new tasks until reach total utilization bound */
-	int count_task = 1;
-	while (total_util < (double)m/2) {
+	int count_task = 0;
+	const double MAX_UTIL = (double)m/2;
+	while (total_util < MAX_UTIL) {
 		Task* task = create_task(m);
-		if ((total_util + task->U) > (double)m/2) {
+		if ((total_util + task->U) > MAX_UTIL) {
 			free(task);
 			break;
 		}
 		
-		task->taskID = count_task;
 		count_task++;
+		task->taskID = count_task;
 		tset->tasks.insert(std::pair<TaskID, Task*>(task->taskID, task));
 		total_util += task->U;
 	}
 
-	//	cout << "Number of tasks: " << tset->tasks.size() << endl;
-	//	cout << "Total util: " << total_util << ". Max util: " << m/2 << endl;
+	cout << "Number of tasks: " << tset->tasks.size() << endl;
+	cout << "Total util: " << total_util << ". Max util: " << MAX_UTIL << endl;
 
 	unsigned int rsf_num = sizeof(RSF)/sizeof(RSF[0]);
 	unsigned int task_num = tset->tasks.size();
@@ -146,8 +194,8 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 	for (unsigned int i=1; i<=resourceNum; i++) {
 		unsigned int rsf_idx = rangen() % rsf_num;
 		unsigned int dirty_task_num = (unsigned int)(RSF[rsf_idx]*task_num);
-		if (dirty_task_num == 1) dirty_task_num = 2;
-		cout << "Number of dirty tasks for resource " << i << ": " << dirty_task_num << endl;
+		if (dirty_task_num <= 1) dirty_task_num = 2;
+		//		cout << "Number of dirty tasks for resource " << i << ": " << dirty_task_num << endl;
 
 		vector<TaskID> dirty_tasks;
 		unsigned int count = 0;
@@ -171,10 +219,102 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 			}
 			
 			tset->tasks[dirty_task_id]->myResources.insert(std::pair<ResourceID, Resource*>(i, res));
+			//			cout << "Task ID: " << dirty_task_id << " == <ResourceID: " << i << ", CSlen: " << res->CSLength 
+			//				 << ", ReqNum: " << res->requestNum << ">" << endl;
+		}
+	}
+
+	return tset;
+}
+#endif
+
+
+/**
+ * Generate taskset with bounded total processors allocated
+ * Critical section lengths are generated with uniform distributions
+ */
+TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int Nmax, 
+						CriticalDuration cslen_type) {
+	TaskSet* tset = new TaskSet();
+
+	/* Add new tasks until the number of allocated processors reaches the bound */
+	unsigned int count_task = 0;
+	unsigned int proc_allocated = 0;
+	//	const unsigned int MAX_PROC = ceil(m*0.95);
+	const unsigned int MAX_PROC = m;
+	while (proc_allocated < MAX_PROC) {
+		Task * task = create_task(m);
+		if (proc_allocated + task->procNum > MAX_PROC) {
+			free(task);
+			break;
+		}
+
+		count_task++;
+		task->taskID = count_task;
+		tset->tasks.insert(std::pair<TaskID, Task*> (task->taskID, task));
+		proc_allocated += task->procNum;
+	}
+
+	cout << "Number of tasks: " << tset->tasks.size() << endl;
+
+	unsigned int rsf_num = sizeof(RSF)/sizeof(RSF[0]);
+	unsigned int task_num = tset->tasks.size();
+
+	/* Set type of critical section length */
+	double min_cslen, max_cslen;
+	if (cslen_type == SHORT) {
+		min_cslen = MIN_SHORT_CSLEN;
+		max_cslen = MAX_SHORT_CSLEN;
+	} else if (cslen_type == MODERATE) { 
+		min_cslen = MIN_MODERATE_CSLEN;
+		max_cslen = MAX_MODERATE_CSLEN;
+	} else {
+		min_cslen = MIN_LONG_CSLEN;
+		max_cslen = MAX_LONG_CSLEN;
+	}
+
+	/* Uniform distribution of critical section lengths */
+	mt19937 rangen(get_seed());
+	//	minstd_ran rangen(get_seed());
+	uniform_int_distribution<int> cslen_dist(min_cslen, max_cslen);
+
+	/* Each resource has a resource-sharing-factor chosen randomly from RSF array */
+	for (unsigned int i=1; i<=resourceNum; i++) {
+		unsigned int rsf_idx = rangen() % rsf_num;
+		unsigned int dirty_task_num = (unsigned int)(RSF[rsf_idx]*task_num);
+		if (dirty_task_num <= 1)
+			dirty_task_num = 2;
+
+		//		cout << "Rsf production: " << RSF[rsf_idx]*task_num << "; Dirty task num: " << dirty_task_num << endl;
+		cout << "Number of dirty tasks for resource " << i << ": " << dirty_task_num << endl;
+
+		vector<TaskID> dirty_tasks;
+		unsigned int count = 0;
+		while (count < dirty_task_num) {
+			/* Pick a random task from task set */
+			unsigned int dirty_task_id = rangen() % task_num + 1;
+			if (find(dirty_tasks.begin(), dirty_tasks.end(), dirty_task_id) != dirty_tasks.end()) {
+				continue;
+			} else {
+				count++;
+				dirty_tasks.push_back(dirty_task_id);
+			}
+			
+			//cout << "Picked task: " << dirty_task_id << endl;
+
+			/* Generate number of accesses and critical section length */
+			Resource* res = new Resource();
+			res->resourceID = i;
+			res->requestNum = rangen() % Nmax + 1;
+			res->CSLength = cslen_dist(rangen);
+
+			/* Add to resource list of the task */
+			tset->tasks[dirty_task_id]->myResources.insert(std::pair<ResourceID, Resource*>(i, res));
+
 			cout << "Task ID: " << dirty_task_id << " == <ResourceID: " << i << ", CSlen: " << res->CSLength 
 				 << ", ReqNum: " << res->requestNum << ">" << endl;
 		}
 	}
 
-	return tset;
+	return tset;	
 }
