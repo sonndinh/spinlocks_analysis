@@ -7,12 +7,21 @@ int main(int argc, char** argv) {
 	SCIP *scip = NULL;
 	SCIP_CALL( SCIPcreate(&scip) );
 
-	// load default plugins
+	// Load default plugins
 	SCIP_CALL( SCIPincludeDefaultPlugins(scip) );
 	
-	// disable output to stdout
+	// Disable output to stdout
 	SCIP_CALL( SCIPsetMessagehdlr(scip, NULL) );
 
+	// Get default time limit
+	SCIP_Real timelimit;
+	SCIP_CALL( SCIPgetRealParam(scip, "limits/time", &timelimit) );
+	std::cout << "Default time limit: " << timelimit << std::endl;
+
+	// Set a new time limit to 30 seconds
+	SCIP_CALL( SCIPsetRealParam(scip, "limits/time", 30) );
+	
+	// Read problem from the file
 	SCIP_CALL( SCIPreadProb(scip, file_name, NULL) );
 	
 	std::cout << "Solving problem" << std::endl;

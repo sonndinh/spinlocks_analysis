@@ -3,6 +3,7 @@
 #include <random>
 #include <map>
 #include <algorithm>
+#include <cassert>
 
 #define _CXX_11_
 #ifdef _CXX_11_
@@ -14,7 +15,7 @@
 
 using namespace std;
 
-#define _DEBUG_DETERMINISTIC_
+//#define _DEBUG_DETERMINISTIC_
 #ifdef _DEBUG_DETERMINISTIC_
 unsigned int seed = 5;
 unsigned int get_seed() {
@@ -71,8 +72,8 @@ Task* create_task(unsigned int m) {
 	/* Calculate initial number of processors */
 	task->procNum = ceil((task->C - task->L)/(task->T - task->L));
 	
-	cout << "Task parameters: <T,C,L,U> == <" << task->T << ", " << task->C 
-		 << ", " << task->L << ", " << task->U << ">; #processors: " << task->procNum << endl;
+	//	cout << "Task parameters: <T,C,L,U> == <" << task->T << ", " << task->C 
+	//		 << ", " << task->L << ", " << task->U << ">; #processors: " << task->procNum << endl;
 	return task;
 }
 
@@ -229,6 +230,11 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 #endif
 
 
+/* Order tasks by decreasing periods (implicit deadline) */
+bool compare(Task* first, Task* second) {
+	return (first->T > second->T);
+}
+
 /**
  * Generate taskset with bounded total processors allocated
  * Critical section lengths are generated with uniform distributions
@@ -286,7 +292,7 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 			dirty_task_num = 2;
 
 		//		cout << "Rsf production: " << RSF[rsf_idx]*task_num << "; Dirty task num: " << dirty_task_num << endl;
-		cout << "Number of dirty tasks for resource " << i << ": " << dirty_task_num << endl;
+		//		cout << "Number of dirty tasks for resource " << i << ": " << dirty_task_num << endl;
 
 		vector<TaskID> dirty_tasks;
 		unsigned int count = 0;
@@ -311,10 +317,63 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 			/* Add to resource list of the task */
 			tset->tasks[dirty_task_id]->myResources.insert(std::pair<ResourceID, Resource*>(i, res));
 
-			cout << "Task ID: " << dirty_task_id << " == <ResourceID: " << i << ", CSlen: " << res->CSLength 
-				 << ", ReqNum: " << res->requestNum << ">" << endl;
+			//			cout << "Task ID: " << dirty_task_id << " == <ResourceID: " << i << ", CSlen: " << res->CSLength 
+			//				 << ", ReqNum: " << res->requestNum << ">" << endl;
 		}
 	}
 
-	return tset;	
+
+	/* Assign tasks' priorities (a larger number means a higher priority) */
+	vector<Task*> tasks_array;
+	for (map<TaskID, Task*>::iterator it=tset->tasks.begin(); it!=tset->tasks.end(); it++) {
+		tasks_array.push_back(it->second);
+	}
+
+	/* Sort tasks by decreasing relative deadline */
+	sort(tasks_array.begin(), tasks_array.end(), compare);
+	unsigned int prio = 1;
+	tasks_array[0]->priority = prio;
+	for (int i=1; i<tasks_array.size(); i++) {
+		if (tasks_array[i]->T == tasks_array[i-1]->T) {
+			tasks_array[i]->priority = tasks_array[i-1]->priority;
+		} else {
+			tasks_array[i]->priority = tasks_array[i-1]->priority + 1;
+		}
+	}
+
+
+	/* Assert priority assignment */
+	/*
+	cout << "Task ID: " << tasks_array[0]->taskID << "; Deadline: " << tasks_array[0]->T 
+		 << "; Priority: " << tasks_array[0]->priority << endl;
+	for (int i=1; i<tasks_array.size(); i++) {
+		assert(tasks_array[i]->T <= tasks_array[i-1]->T);
+		assert(tasks_array[i]->priority >= tasks_array[i-1]->priority);
+		cout << "Task ID: " << tasks_array[i]->taskID << "; Deadline: " << tasks_array[i]->T 
+			 << "; Priority: " << tasks_array[i]->priority << endl;
+	}
+	*/
+
+	/* For each task, find the sets of higher, lower, and equal priority tasks */
+	for (map<TaskID, Task*>::iterator it=tset->tasks.begin(); it!=tset->tasks.end(); it++) {
+		TaskID task_id = it->first;
+		vector<TaskID> &hp_tasks = tset->higher_prio_tasks[task_id];
+		vector<TaskID> &lp_tasks = tset->lower_prio_tasks[task_id];
+		vector<TaskID> &ep_tasks = tset->equal_prio_tasks[task_id];
+
+		for (int i=0; i<tasks_array.size(); i++) {
+			if (tasks_array[i]->taskID == task_id)
+				continue;
+
+			if (tasks_array[i]->priority > it->second->priority) {
+				hp_tasks.push_back(tasks_array[i]->taskID);
+			} else if(tasks_array[i]->priority < it->second->priority) {
+				lp_tasks.push_back(tasks_array[i]->taskID);
+			} else {
+				ep_tasks.push_back(tasks_array[i]->taskID);
+			}
+		}
+	}
+
+	return tset;
 }

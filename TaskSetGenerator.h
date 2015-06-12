@@ -39,6 +39,9 @@ using namespace std;
 /* Type of critical section (short or moderate or long) */
 typedef enum {SHORT, MODERATE, LONG} CriticalDuration;
 
+/* Type of spin locks */
+typedef enum {FIFO, PRIO_UNORDERED, PRIO_FIFO} SpinlockType;
+
 typedef unsigned int ResourceID;
 typedef unsigned int TaskID;
 
@@ -64,17 +67,21 @@ typedef struct Task {
 	unsigned int procNum; // number of processors allocated
 	double R; // response time, in microsecond
 
+	unsigned int newProcNum; // new number of processors allocated in the next iteration
 	bool converged; // true if the task parameters have converged
 	
 	/* Other tasks access to the same resources */
 	map<ResourceID, vector<TaskID>*> interferences;
 
-	/* Priority of the task in case of priority lock*/
-	unsigned int priority;	
+	/* Larger number means higher priority */
+	unsigned int priority;
 } Task;
 
 typedef struct TaskSet {
-	map<TaskID, Task*> tasks; // map task id to its data
+	map<TaskID, Task*> tasks; // map task id to its data structure
+	map<TaskID, vector<TaskID> > higher_prio_tasks;
+	map<TaskID, vector<TaskID> > lower_prio_tasks;
+	map<TaskID, vector<TaskID> > equal_prio_tasks;
 } TaskSet;
 
 /* Function prototypes for generating task set */

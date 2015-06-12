@@ -1,5 +1,6 @@
-#include <math.h>
+#include <cmath>
 #include <iostream>
+#include <algorithm>
 #include <ilcplex/ilocplex.h>
 #include "BlockingAnalysis.h"
 #include <scip/scip.h>
@@ -66,8 +67,8 @@ bool init_iteration(TaskSet* taskset, unsigned int m) {
 	}
 
 
-#define _INIT_DEBUG_
-#define _INIT_VERBOSE_
+	//#define _INIT_DEBUG_
+	//#define _INIT_VERBOSE_
 
 #ifdef _INIT_DEBUG_
 	/* Debug: dump tasks information */
@@ -114,7 +115,7 @@ int number_tasks_fail = 0;
 		cout << endl;
 #endif // _INIT_VERBOSE_
 	}
-	cout << "Total #processors: " << total_proc << endl;
+	cout << "Total #processors (initialization): " << total_proc << endl;
 	if (total_proc > m || isOk == false) {
 		cout << "#tasks fail: " << number_tasks_fail << "; Taskset fail !!!" << endl;
 		return false;
@@ -139,11 +140,14 @@ typedef struct {
 	double csLen;
 } CSData;
 
+/* Generic constraints */
 void add_generic_contraint_sum_of_y_for_each_request(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
 													 IloRangeArray &cons, Task *task, IloEnv &env);
 void add_generic_constraint_rule_out_mismatched_x_and_y(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
 														map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
 														IloRangeArray &cons, Task *task, IloEnv &env);
+
+/* FIFO-ordered constraints */
 void add_fifo_constraint_other_tasks(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars, 
 									 map<ResourceID, map<TaskID, CSData> > &x_data, 
 									 map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
@@ -151,18 +155,48 @@ void add_fifo_constraint_other_tasks(map<ResourceID, map<TaskID, IloNumVarArray>
 void add_fifo_constraint_myself(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
 								map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
 								IloRangeArray &cons, Task *task, IloEnv &env);
+
+/* Priority-ordered common constraints */
+void add_prio_constraint_at_most_one_lp_request(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+												map<ResourceID, vector<IloNumVarArray> > &my_y_vars,
+												map<ResourceID, map<TaskID, CSData> > &x_data, 
+												IloRangeArray &cons, Task *task, TaskSet *taskset, IloEnv &env);
+
+/* Priority-orderd with unordered tiebreak constraints */
+void add_prio_constraint_unordered_tiebreak(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+											map<ResourceID, vector<IloNumVarArray> > &my_y_vars,
+											map<ResourceID, map<TaskID, CSData> > &x_data, 
+											IloRangeArray &cons, Task *task, map<ResourceID, double> &dpr, TaskSet *taskset, IloEnv &env);
+
+/* Priority-ordered with FIFO tiebreak constraints */
+void add_prio_constraint_fifo_tiebreak_hp(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+										  map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+										  map<ResourceID, map<TaskID, CSData> > &x_data,
+										  IloRangeArray &cons, Task *task, map<ResourceID, double> &dpr, TaskSet *taskset, IloEnv &env);
+void add_prio_constraint_fifo_tiebreak_ep(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+										  map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+										  map<ResourceID, map<TaskID, CSData> > &x_data,
+										  IloRangeArray &cons, Task *task, TaskSet *taskset, IloEnv &env);
+void add_prio_constraint_fifo_tiebreak_self(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+											map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
+											IloRangeArray &cons, Task *task, IloEnv &env);
+
+/* Objective function */
 void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars, 
 							map<ResourceID, map<TaskID, CSData> > &x_data, 
 							map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
 							map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
 							Task *task, IloModel &model, IloEnv &env);
 
-void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data, SCIP_Real *max_blocking);
+void call_optimizer(Task *task, TaskSet* taskset, map<ResourceID, map<TaskID, CSData> > &x_data, 
+					map<ResourceID, double> &dpr, SCIP_Real *max_blocking, SpinlockType lock_type);
+
+double delay_per_request(Task *task, TaskSet *taskset, ResourceID rid, SpinlockType lock_type);
 
 /* Update task's blocking time, #processors, and response time 
  * based on results from the previous iteration.
  */
-void task_analysis(Task* task, TaskSet* taskset, unsigned int m, SCIP_Real *max_blocking) {
+void task_analysis(Task* task, TaskSet* taskset, unsigned int m, SCIP_Real *max_blocking, SpinlockType lock_type) {
 	TaskID myId = task->taskID;
 	TaskID r_i = task->R;
 	map<ResourceID, vector<TaskID>*> &interferences = task->interferences;
@@ -214,15 +248,27 @@ void task_analysis(Task* task, TaskSet* taskset, unsigned int m, SCIP_Real *max_
 	cout << endl;
 #endif  // _ITER_DEBUG_
 
+	/* Calculate delay-per-request if lock type is priority-ordered */
+	map<ResourceID, double> dpr;
+	if (lock_type == PRIO_UNORDERED || lock_type == PRIO_FIFO) {
+		map<ResourceID, Resource*> &my_resources = task->myResources;
+		for (map<ResourceID, Resource*>::iterator it = my_resources.begin(); it != my_resources.end(); it++) {
+			ResourceID res_id = it->first;
+			double delay = delay_per_request(task, taskset, res_id, lock_type);
+			dpr[res_id] = delay;
+		}
+	}
+	
 	// Call the optimizer to solve the maximum blocking time
 	SCIP_Real max_blk;
-	call_optimizer_fifo(task, x_data, &max_blk);
+	call_optimizer(task, taskset, x_data, dpr, &max_blk, lock_type);
 	*max_blocking = max_blk;
 }
 
 SCIP_RETCODE optimize(string fname, SCIP_Real *obj_value);
 
-void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data, SCIP_Real *blocking) {
+void call_optimizer(Task *task, TaskSet *taskset, map<ResourceID, map<TaskID, CSData> > &x_data, 
+					map<ResourceID, double> &dpr, SCIP_Real *blocking, SpinlockType lock_type) {
 	/* Solve the maximization of blocking */
 	IloEnv env;
 	try {
@@ -304,11 +350,33 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		/* Constraint 5: mismatched product of y&x is zero */
 		add_generic_constraint_rule_out_mismatched_x_and_y(my_y_vars, my_x_vars, cons, task, env);
 
-		/* Constraint 8: at most 1 request from each other processor of another task block me */
-		add_fifo_constraint_other_tasks(x_vars, x_data, my_y_vars, cons, task, env);
+		if (lock_type == FIFO) {
+			/* Constraint 8.1: at most 1 request from each other processor of another task block me */
+			add_fifo_constraint_other_tasks(x_vars, x_data, my_y_vars, cons, task, env);
 
-		/* Constraint 9: doing the same for other processors in the same task */
-		add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
+			/* Constraint 8.2: doing the same for other processors in the same task */
+			add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
+
+		} else if (lock_type == PRIO_UNORDERED) {
+			/* Constraint 9: at most 1 lower locking-priority request can precede each of my requests */
+			add_prio_constraint_at_most_one_lp_request(x_vars, my_y_vars, x_data, cons, task, taskset, env);
+			
+			/* Constraint 10: bound contribution of equal & higher locking-priority tasks */
+			add_prio_constraint_unordered_tiebreak(x_vars, my_y_vars, x_data, cons, task, dpr, taskset, env);
+			
+		} else if (lock_type == PRIO_FIFO) {
+			/* Constraint 9: apply to both types of priority-ordered spin locks */
+			add_prio_constraint_at_most_one_lp_request(x_vars, my_y_vars, x_data, cons, task, taskset, env);
+
+			/* Constraint 11: bound contribution of higher locking-priority tasks */
+			add_prio_constraint_fifo_tiebreak_hp(x_vars, my_y_vars, x_data, cons, task, dpr, taskset, env);
+
+			/* Constraint 12: bound contribution of equal locking-priotity tasks */
+			add_prio_constraint_fifo_tiebreak_ep(x_vars, my_y_vars, x_data, cons, task, taskset, env);
+			
+			/* Constraint 13: bound contribution of the other processors of the same task */
+			add_prio_constraint_fifo_tiebreak_self(my_y_vars, my_x_vars, cons, task, env);
+		}
 		
 		/* Add constraints to Cplex model */
 		model.add(cons);
@@ -325,7 +393,13 @@ void call_optimizer_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_da
 		TaskID task_id = task->taskID;
 		string file_name;
 		stringstream ss;
-		ss << "tmp/fifo_" << task_id << ".lp";
+		if (lock_type == FIFO) {
+			ss << "tmp/fifo_" << task_id << ".lp";
+		} else if (lock_type == PRIO_UNORDERED) {
+			ss << "tmp/prio_unordered_" << task_id << ".lp";
+		} else if (lock_type == PRIO_FIFO) {
+			ss << "tmp/prio_fifo_" << task_id << ".lp";
+		}
 		file_name = ss.str();
 
 		// export to .lp file
@@ -410,6 +484,12 @@ SCIP_RETCODE optimize(string fname, SCIP_Real *obj_value) {
 	
 	// disable output to stdout
 	SCIP_CALL( SCIPsetMessagehdlr(scip, NULL) );
+
+	// Set time limit to 30 seconds
+	//	SCIP_Real timelimit;
+	//	SCIP_CALL( SCIPgetRealParam(scip, "limits/time", &timelimit) );
+	//	cout << "Default time limit of SCIP: " << timelimit << endl;
+	SCIP_CALL( SCIPsetRealParam(scip, "limits/time", 30) );
 	
 	SCIP_CALL( SCIPreadProb(scip, file_name, NULL) );
 	
@@ -617,6 +697,285 @@ void add_objective_function(map<ResourceID, map<TaskID, IloNumVarArray> > &x_var
 }
 
 
+/* Constraint 9 (Priority): at most 1 request from all lower priority tasks 
+ * can precede a request sent from me
+ */
+void add_prio_constraint_at_most_one_lp_request(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+												map<ResourceID, vector<IloNumVarArray> > &my_y_vars,
+												map<ResourceID, map<TaskID, CSData> > &x_data, 
+												IloRangeArray &cons, Task *task, TaskSet *taskset, IloEnv &env) {
+	TaskID task_id = task->taskID;
+	vector<TaskID> &my_lp_tasks = taskset->lower_prio_tasks[task_id];
+	map<ResourceID, map<TaskID, IloNumVarArray> >::iterator it = x_vars.begin();
+	for (; it != x_vars.end(); it++) {
+		ResourceID res_id = it->first;
+		map<TaskID, IloNumVarArray> &interfere = it->second;
+		IloExpr expr(env);
+		for (map<TaskID, IloNumVarArray>::iterator iter=interfere.begin(); iter!=interfere.end(); iter++) {
+			TaskID interfere_task_id = iter->first;
+			if (find(my_lp_tasks.begin(), my_lp_tasks.end(), interfere_task_id) != my_lp_tasks.end()) {
+				IloNumVarArray &lp_x = iter->second;
+				unsigned int his_request_num = x_data[res_id][interfere_task_id].requestNum;
+				for (int i=0; i<his_request_num; i++) {
+					expr += lp_x[i];
+				}
+			}
+		}
+
+		unsigned int my_request_num = task->myResources[res_id]->requestNum;
+		// considering the first processor (id=0)
+		IloNumVarArray &my_y = my_y_vars[res_id][0];
+		for (int i=0; i<my_request_num; i++) {
+			expr -= my_y[i];
+		}
+
+		cons.add(expr <= 0);
+		expr.end();
+	}
+}
+
+/* Calculate delay-per-request for priority-ordered locks with unordered tie break */
+double delay_per_request(Task *task, TaskSet *taskset, ResourceID rid, SpinlockType lock_type) {
+	if (lock_type != PRIO_UNORDERED && lock_type != PRIO_FIFO) {
+		cout << "Wrong lock type in calculation of delay-per-request !!!" << endl;
+		return 0;
+	}
+
+	TaskID my_id = task->taskID;
+	map<TaskID, Task*> &tset = taskset->tasks;
+	vector<TaskID> &lp_tasks = taskset->lower_prio_tasks[my_id];
+	vector<TaskID> &hp_tasks = taskset->higher_prio_tasks[my_id];
+	vector<TaskID> &ep_tasks = taskset->equal_prio_tasks[my_id];
+
+	// List of interfering tasks w.r.t this resource
+	vector<TaskID> *interfering_tasks = task->interferences[rid];
+
+	// Collect lower, higher, equal locking-priority tasks w.r.t this resource
+	vector<TaskID> lp_tasks_for_resource;
+	vector<TaskID> hp_tasks_for_resource;
+	vector<TaskID> ep_tasks_for_resource;
+	for (int i=0; i<interfering_tasks->size(); i++) {
+		TaskID his_id = interfering_tasks->at(i);
+		if (find(lp_tasks.begin(), lp_tasks.end(), his_id) != lp_tasks.end()) {
+			lp_tasks_for_resource.push_back(his_id);
+		} else if (find(hp_tasks.begin(), hp_tasks.end(), his_id) != hp_tasks.end()) {
+			hp_tasks_for_resource.push_back(his_id);
+		} else if (find(ep_tasks.begin(), ep_tasks.end(), his_id) != ep_tasks.end()) {
+			ep_tasks_for_resource.push_back(his_id);
+		} else {
+			cout << "SOMETHING WRONG!!!" << endl;
+		}
+	}
+
+	// Find the maximum length of a critical section among
+	// lower locking-priority tasks (w.r.t this resource)
+	double max_cslen_lp = 0;
+	for (int i=0; i<lp_tasks_for_resource.size(); i++) {
+		TaskID his_id = lp_tasks_for_resource[i];
+		double his_cs_len = tset[his_id]->myResources[rid]->CSLength;
+		if (his_cs_len > max_cslen_lp)
+			max_cslen_lp = his_cs_len;
+	}
+
+	// Add 1 to avoid the case when max_cslen_lp equals 0
+	double dpr = max_cslen_lp + 1;
+
+	// Debugging variable to count the number of iterations
+	int count = 0;
+
+	bool converged = false;
+	while (!converged) {
+		count++;
+		// Init tmp (interferences from LOWER locking-priority requests)
+		double tmp = max_cslen_lp + 1;
+		
+		// Add interferences from HIGHER locking-priority requests
+		for (int i=0; i<hp_tasks_for_resource.size(); i++) {
+			TaskID his_id = hp_tasks_for_resource[i];
+			double his_cs_len = tset[his_id]->myResources[rid]->CSLength;
+			unsigned int his_req_num = tset[his_id]->myResources[rid]->requestNum;
+			tmp += njobs(tset[his_id], dpr) * his_req_num * his_cs_len;
+		}
+
+		// Add interferences from EQUAL locking-priority requests
+		if (lock_type == PRIO_UNORDERED) {
+			for (int i=0; i<ep_tasks_for_resource.size(); i++) {
+				TaskID his_id = ep_tasks_for_resource[i];
+				double his_cs_len = tset[his_id]->myResources[rid]->CSLength;
+				unsigned int his_req_num = tset[his_id]->myResources[rid]->requestNum;
+				tmp += njobs(tset[his_id], dpr) * his_req_num * his_cs_len;
+			}
+			double my_cs_len = task->myResources[rid]->CSLength;
+			unsigned int my_req_num = task->myResources[rid]->requestNum;
+			tmp += (my_req_num - 1)*my_cs_len;
+		} else if (lock_type == PRIO_FIFO) {
+			for (int i=0; i<ep_tasks_for_resource.size(); i++) {
+				TaskID his_task_id = ep_tasks_for_resource[i];
+				double his_cs_len = tset[his_task_id]->myResources[rid]->CSLength;
+				unsigned int his_proc_num = tset[his_task_id]->procNum;
+				unsigned int his_req_num = njobs(tset[his_task_id], task->R) * tset[his_task_id]->myResources[rid]->requestNum;
+				tmp += min(his_proc_num, his_req_num) * his_cs_len;
+			}
+			unsigned int my_proc_num = task->procNum;
+			unsigned int my_req_num = task->myResources[rid]->requestNum;
+			double my_cs_len = task->myResources[rid]->CSLength;
+			tmp += min(my_proc_num-1, my_req_num-1) * my_cs_len;
+		}
+
+		// Set flag to true if dpr is converged
+		if (tmp == dpr)
+			converged = true;
+		
+		// Update value for dpr either way
+		dpr = tmp;
+	}
+
+	cout << "Number of iterations for delay-per-request: " << count << endl;
+	return dpr;
+}
+
+
+/* Constraint 10: bound contributions of higher and equal locking-priority tasks 
+ * for with unordered tie break
+ */
+void add_prio_constraint_unordered_tiebreak(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+											map<ResourceID, vector<IloNumVarArray> > &my_y_vars,
+											map<ResourceID, map<TaskID, CSData> > &x_data, 
+											IloRangeArray &cons, Task *task, map<ResourceID, double> &dpr, TaskSet *taskset, IloEnv &env) {
+	TaskID my_task_id = task->taskID;
+	vector<TaskID> &my_hp_tasks = taskset->higher_prio_tasks[my_task_id];
+	vector<TaskID> &my_ep_tasks = taskset->equal_prio_tasks[my_task_id];
+	map<TaskID, Task*> &tset = taskset->tasks;
+
+	map<ResourceID, map<TaskID, IloNumVarArray> >::iterator it = x_vars.begin();
+	for (; it != x_vars.end(); it++) {
+		ResourceID res_id = it->first;
+		map<TaskID, IloNumVarArray> &interfere = it->second;
+		for (map<TaskID, IloNumVarArray>::iterator iter = interfere.begin(); iter != interfere.end(); iter++) {
+			TaskID his_task_id = iter->first;
+			if (find(my_hp_tasks.begin(), my_hp_tasks.end(), his_task_id) != my_hp_tasks.end() ||
+				find(my_ep_tasks.begin(), my_ep_tasks.end(), his_task_id) != my_ep_tasks.end()) {
+				// Either higher or equal locking-priority tasks
+				IloExpr expr(env);
+				unsigned int his_request_num = x_data[res_id][his_task_id].requestNum;
+				// Left-hand side of constraint 10
+				for (int i=0; i<his_request_num; i++) {
+					expr += iter->second[i];
+				}
+				
+				// Right-hand side of constraint 10
+				double my_dpr = dpr[res_id];
+				int coeff = njobs(tset[his_task_id], my_dpr) * tset[his_task_id]->myResources[res_id]->requestNum;
+				unsigned int my_req_num = task->myResources[res_id]->requestNum;
+				IloNumVarArray &y_vars = my_y_vars[res_id][0];
+				for (int i=0; i<my_req_num; i++) {
+					expr -= coeff * y_vars[i];
+				}
+
+				// Add constraint
+				cons.add(expr <= 0);
+				expr.end();
+			}
+		}
+	}
+}
+
+
+/* Constraint 11: contribution of higher locking-priority tasks for priority-ordered locks 
+ * with FIFO tie break
+ */
+void add_prio_constraint_fifo_tiebreak_hp(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+										  map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+										  map<ResourceID, map<TaskID, CSData> > &x_data,
+										  IloRangeArray &cons, Task *task, map<ResourceID, double> &dpr, TaskSet *taskset, IloEnv &env) {
+	TaskID my_task_id = task->taskID;
+	vector<TaskID> &my_hp_tasks = taskset->higher_prio_tasks[my_task_id];
+	map<TaskID, Task*> &tset = taskset->tasks;
+	
+	map<ResourceID, map<TaskID, IloNumVarArray> >:: iterator it = x_vars.begin();
+	for (; it != x_vars.end(); it++) {
+		ResourceID res_id = it->first;
+		map<TaskID, IloNumVarArray> &interfere = it->second;
+		for (map<TaskID, IloNumVarArray>::iterator iter = interfere.begin(); iter != interfere.end(); iter++) {
+			TaskID his_task_id = iter->first;
+			if (find(my_hp_tasks.begin(), my_hp_tasks.end(), his_task_id) != my_hp_tasks.end()) {
+				// Interfering task is a higher locking-priority task
+				IloExpr expr(env);
+				unsigned int his_req_num = x_data[res_id][his_task_id].requestNum;
+				IloNumVarArray &his_x_vars = iter->second;
+				for (int i=0; i<his_req_num; i++) {
+					expr += his_x_vars[i];
+				}
+
+				// Right-hand side expression
+				double res_dpr = dpr[res_id];
+				int coeff = njobs(tset[his_task_id], res_dpr) * tset[his_task_id]->myResources[res_id]->requestNum;
+				unsigned int my_req_num = task->myResources[res_id]->requestNum;
+				IloNumVarArray &y_vars = my_y_vars[res_id][0];
+				for (int i=0; i<my_req_num; i++) {
+					expr -= coeff * y_vars[i];
+				}
+
+				// Add constraint
+				cons.add(expr <= 0);
+				expr.end();
+			}
+		}
+	}
+}
+
+
+/* Constraint 12: bound contribution of equal locking-priority tasks for 
+ * Priority-ordered locks with FIFO tie-break
+ */
+void add_prio_constraint_fifo_tiebreak_ep(map<ResourceID, map<TaskID, IloNumVarArray> > &x_vars,
+										  map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+										  map<ResourceID, map<TaskID, CSData> > &x_data,
+										  IloRangeArray &cons, Task *task, TaskSet *taskset, IloEnv &env) {
+	vector<TaskID> &my_ep_tasks = taskset->equal_prio_tasks[task->taskID];
+	map<TaskID, Task*> &tset = taskset->tasks;
+	
+	map<ResourceID, map<TaskID, IloNumVarArray> >::iterator it = x_vars.begin();
+	for (; it != x_vars.end(); it++) {
+		ResourceID res_id = it->first;
+		map<TaskID, IloNumVarArray> &interfere = it->second;
+		for (map<TaskID, IloNumVarArray>::iterator iter = interfere.begin(); iter != interfere.end(); iter++) {
+			TaskID his_task_id = iter->first;
+			if (find(my_ep_tasks.begin(), my_ep_tasks.end(), his_task_id) != my_ep_tasks.end()) {
+				unsigned int his_req_num = x_data[res_id][his_task_id].requestNum;
+				IloExpr expr1(env);
+				IloExpr expr2(env);
+				// Left-hand side of contraint 12
+				for (int i=0; i<his_req_num; i++) {
+					expr1 += iter->second[i];
+					expr2 += iter->second[i];
+				}
+
+				// Right-hand side of constraint 12
+				expr1 -= his_req_num;
+				cons.add(expr1 <= 0);
+				expr1.end();
+				unsigned int my_req_num = task->myResources[res_id]->requestNum;
+				int his_proc_num = tset[his_task_id]->procNum;
+				for (int i=0; i<my_req_num; i++) {
+					expr2 -= his_proc_num * my_y_vars[res_id][0][i];
+				}
+				cons.add(expr2 <= 0);
+				expr2.end();
+			}
+		}
+	}
+}
+
+
+/* Constraint 13: bound contribution of requests from other processors of the same task */
+void add_prio_constraint_fifo_tiebreak_self(map<ResourceID, vector<IloNumVarArray> > &my_y_vars, 
+											map<ResourceID, vector<IloNumVarArray> > &my_x_vars, 
+											IloRangeArray &cons, Task *task, IloEnv &env) {
+	add_fifo_constraint_myself(my_y_vars, my_x_vars, cons, task, env);
+}
+
+#if 0
 #define _SENSITIVITY_ 100
 /**
  * Doing schelability analysis for a task set
@@ -719,7 +1078,7 @@ bool is_schedulable(TaskSet *tset, unsigned int m) {
 	map<TaskID, Task*> &taskset = tset->tasks;
 	map<TaskID, Task*>::iterator it = taskset.begin();
 
-	/* For all tasks, set their response times to relative deadline*/
+	/* For all tasks, set their response times to relative deadline */
 	for (; it != taskset.end(); it++) {
 		it->second->R = it->second->T;
 	}
@@ -750,7 +1109,104 @@ bool is_schedulable(TaskSet *tset, unsigned int m) {
 		return true;
 	return false;
 }
+#endif
 
+
+/**
+ * Schedulability test using the following procedure:
+ * In each iteration, update blocking bound, then update number of processors 
+ * allocated for tasks. For each task, if the new number of processors allocated 
+ * to it decreases, keep it as the previous iteration. Otherwise, if it increases,
+ * update it. The test terminates when the total number of processors > m (unschedulable)
+ * OR processor allocations for all tasks do not change (schedulable)
+ */
+bool is_schedulable2(TaskSet *tset, unsigned int m, SpinlockType lock_type) {
+	map<TaskID, Task*> &taskset = tset->tasks;
+	map<TaskID, Task*>::iterator it = taskset.begin();
+
+	/* For all tasks, set their response times to relative deadline */
+	for (; it != taskset.end(); it++) {
+		it->second->R = it->second->T;
+	}
+
+	/* Copy values for newProcNum fields */
+	for (it = taskset.begin(); it != taskset.end(); it++) {
+		it->second->newProcNum = it->second->procNum;
+	}
+
+	int iter_num = 0;
+	while (true) {
+		iter_num++;
+		unsigned int total_proc_num = 0;
+		SCIP_Real blocking;
+		
+		/* Copy values of newProcNum back to procNum for each task */
+		for (it = taskset.begin(); it != taskset.end(); it++) {
+			if (it->second->converged == false)
+				it->second->procNum = it->second->newProcNum;
+		}
+		
+		/* Calculate new processors allocations for tasks */
+		for (it = taskset.begin(); it != taskset.end(); it++) {
+			Task * task = it->second;
+			task_analysis(task, tset, m, &blocking, lock_type);
+			
+			/* If D <= L + B1, this task cannot be schedulable */
+			if (task->T <= task->L + blocking) {
+				return false;
+			}
+			unsigned int proc_num = alloc_proc(task->C, task->L, task->T, task->procNum*blocking, blocking);
+			
+			/* If the new processors allocated is larger than the old one, update it,
+			 * otherwise, do not update it
+			 */
+			//			if (proc_num > task->procNum) {
+			//				task->procNum = proc_num;
+			//				task->converged = false;
+			//			} else {
+			//				task->converged = true;
+			//			}
+			if (proc_num > task->procNum) {
+				task->newProcNum = proc_num;
+				task->converged = false;
+			} else {
+				task->converged = true;
+			}
+			
+			/* Update task's blocking bound, total number of processors allocated so far */
+			task->B1 = blocking;
+			//			total_proc_num += task->procNum;
+			total_proc_num += task->newProcNum;
+		}
+
+		cout << "Iter " << iter_num << "; total #processors: " << total_proc_num << endl;
+		
+		/* If total processors used is larger than m, the taskset is unschedulable */
+		if (total_proc_num > m) {
+			cout << "Total processors needed > m" << endl;
+			return false;
+		}
+
+		/* If processor allocations for all tasks do not change from the previous iteration
+		 * then the taskset is considered as converged
+		 */
+		bool global_converged = true;
+		for (it = taskset.begin(); it != taskset.end(); it++) {
+			global_converged &= it->second->converged;
+		}
+
+		if (global_converged == true) {
+			cout << "Global converged reaches" << endl;
+			return true;
+		}
+	}
+	
+	//	cout << "New total processors allocated: " << total_proc_num << endl;
+	
+	//	if (total_proc_num <= m)
+	//		return true;
+	//	return false;
+}
 
 /* Helper funtions */
 
