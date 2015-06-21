@@ -8,9 +8,17 @@
 
 using namespace std;
 
+
+// Global variables accessed by other files
+int g_proc_num;
+int g_resource_num;
+int g_max_request_num;
+string g_cs_type;
+int g_taskset_num;
+
 int main(int argc, char** argv) {
 	
-	if (argc != 6) {
+	if (argc < 6) {
 		cout << "Usage: ./prog ProcNum ResourceNum Nmax cs_type repetition" << endl;
 		exit(1);
 	}
@@ -21,25 +29,33 @@ int main(int argc, char** argv) {
 
 	// Number of processors in the system, e.g 16, 32
 	const int PROCNUM = atoi(argv[1]);
+	g_proc_num = PROCNUM;
 
 	// Number of shared resource in the task set, e.g 3, 5
 	const int RESOURCE_NUM = atoi(argv[2]);
+	g_resource_num = RESOURCE_NUM;
 
 	// Maximum number of requests to a resource per job, e.g 4
 	const int N_MAX = atoi(argv[3]);
+	g_max_request_num = N_MAX;
 
 	// Set the critical section type
 	if ( !strcmp(argv[4], "short") || !strcmp(argv[4], "Short") ) {
 		cslen_type = SHORT;
+		g_cs_type = "short";
 	} else if ( !strcmp(argv[4], "mod") || !strcmp(argv[4], "Mod") ) {
 		cslen_type = MODERATE;
+		g_cs_type = "mod";
 	} else if ( !strcmp(argv[4], "long") || !strcmp(argv[4], "Long") ) {
 		cslen_type = LONG;
-	} else if (argv[4] == NULL) {
-		cslen_type = SHORT;
+		g_cs_type = "long";
+	} else {
+		cout << "Wrong critical section type!" << endl;
+		exit(1);
 	}
 
 	const int TASKSET_NUM = atoi(argv[5]);
+	g_taskset_num = TASKSET_NUM;
 
 	// Count number of tasksets deemed to be successfully generated
 	int success_count = 0;
@@ -49,10 +65,28 @@ int main(int argc, char** argv) {
 	unsigned int count_schedulable_prio_fifo = 0;
 
 	// Output to a file
-	ofstream outfile;
+	ofstream fifo_ofile;
+	ofstream prio_unordered_ofile;
+	ofstream prio_fifo_ofile;
 	stringstream ss;
+	stringstream header;
+	header << g_proc_num << "_" << g_resource_num << "_" << g_max_request_num << "_" << g_cs_type << "_" << g_taskset_num;
+
 	//	ss << "results/exp_" << argv[1] << "_" << argv[2] << "_" << argv[3] << "_" << argv[4] << "_" << argv[5] << ".dat";
-	//	outfile.open(ss.str().c_str());
+
+	// Open output file for FIFO case
+	ss << "results/" << header.str() << "_fifo" << ".dat";
+	fifo_ofile.open(ss.str().c_str());
+	ss.str(string());
+
+	// Open output file for Priority with unordered tiebreak
+	ss << "results/" << header.str() << "_prio" << ".dat";
+	prio_unordered_ofile.open(ss.str().c_str());
+	ss.str(string());
+
+	// Open output file for Priority with FIFO tiebreak
+	ss << "results/" << header.str() << "_prio_fifo" << ".dat";
+	prio_fifo_ofile.open(ss.str().c_str());
 	
 	// Generate a bunch of task sets
 	for (int i=0; i<TASKSET_NUM; i++) {
@@ -118,8 +152,12 @@ int main(int argc, char** argv) {
 		free(taskset);
 	}
 
-	//	outfile << (double) count_schedulable*100/TASKSET_NUM;
-	//	outfile.close();
+	fifo_ofile << (double) count_schedulable_fifo/TASKSET_NUM;
+	prio_unordered_ofile << (double) count_schedulable_prio/TASKSET_NUM;
+	prio_fifo_ofile << (double) count_schedulable_prio_fifo/TASKSET_NUM;
+	fifo_ofile.close();
+	prio_unordered_ofile.close();
+	prio_fifo_ofile.close();	
 	
 	cout << "Percent of schedulable tasksets with FIFO locks: " << (double) count_schedulable_fifo*100/TASKSET_NUM << "%" << endl;
 	cout << "Percent of schedulable tasksets with Priority locks: " << (double) count_schedulable_prio*100/TASKSET_NUM << "%" << endl;

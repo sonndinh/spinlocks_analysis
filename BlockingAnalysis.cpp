@@ -8,6 +8,13 @@
 	
 ILOSTLBEGIN
 
+
+extern int g_proc_num;
+extern int g_resource_num;
+extern int g_max_request_num;
+extern string g_cs_type;
+extern int g_taskset_num;
+
 /* Update number of processors allocated */
 unsigned int alloc_proc(double C, double L, double D, double Bn, double B1) {
 	if (D < L+B1)
@@ -392,13 +399,15 @@ void call_optimizer(Task *task, TaskSet *taskset, map<ResourceID, map<TaskID, CS
 		// create file name
 		TaskID task_id = task->taskID;
 		string file_name;
-		stringstream ss;
+		stringstream ss; // full path
+		stringstream header; // inner folder name
+		header << g_proc_num << "_" << g_resource_num << "_" << g_max_request_num << "_" << g_cs_type;
 		if (lock_type == FIFO) {
-			ss << "tmp/fifo_" << task_id << ".lp";
+			ss << "tmp/" << header.str() << "_fifo_task_" << task_id << ".lp";
 		} else if (lock_type == PRIO_UNORDERED) {
-			ss << "tmp/prio_unordered_" << task_id << ".lp";
+			ss << "tmp/" << header.str() << "_prio_task_" << task_id << ".lp";
 		} else if (lock_type == PRIO_FIFO) {
-			ss << "tmp/prio_fifo_" << task_id << ".lp";
+			ss << "tmp/" << header.str() << "_prio_fifo_task_" << task_id << ".lp";
 		}
 		file_name = ss.str();
 
@@ -485,11 +494,11 @@ SCIP_RETCODE optimize(string fname, SCIP_Real *obj_value) {
 	// disable output to stdout
 	SCIP_CALL( SCIPsetMessagehdlr(scip, NULL) );
 
-	// Set time limit to 30 seconds
+	// Set time limit to 300 seconds (5 minutes)
 	//	SCIP_Real timelimit;
 	//	SCIP_CALL( SCIPgetRealParam(scip, "limits/time", &timelimit) );
 	//	cout << "Default time limit of SCIP: " << timelimit << endl;
-	SCIP_CALL( SCIPsetRealParam(scip, "limits/time", 30) );
+	SCIP_CALL( SCIPsetRealParam(scip, "limits/time", 300) );
 	
 	SCIP_CALL( SCIPreadProb(scip, file_name, NULL) );
 	
@@ -830,7 +839,7 @@ double delay_per_request(Task *task, TaskSet *taskset, ResourceID rid, SpinlockT
 		dpr = tmp;
 	}
 
-	cout << "Number of iterations for delay-per-request: " << count << endl;
+	//	cout << "Number of iterations for delay-per-request: " << count << endl;
 	return dpr;
 }
 
