@@ -71,7 +71,7 @@ Task* create_task(unsigned int m) {
 	task->L = ceil(critical_path_ratio*task->T);
 
 	/* Generate utilization */
-	uniform_real_distribution<double> util_dist(1.25, sqrt(m));
+	uniform_real_distribution<double> util_dist(1.25, sqrt(sqrt(m)));
 	task->U = util_dist(num_gen);
 	task->C = task->U * task->T;
 
@@ -267,7 +267,7 @@ TaskSet* create_taskset(unsigned int m, unsigned int resourceNum, unsigned int N
 		proc_allocated += task->procNum;
 	}
 
-	cout << "Number of tasks: " << tset->tasks.size() << endl;
+	//	cout << "Number of tasks: " << tset->tasks.size() << endl;
 
 	unsigned int rsf_num = sizeof(RSF)/sizeof(RSF[0]);
 	unsigned int task_num = tset->tasks.size();

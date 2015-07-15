@@ -2,8 +2,6 @@ CXX_HOME = /export/austen/home/son/tools/gcc-4.9.2-install
 CXX = $(CXX_HOME)/bin/g++ -O0
 
 ### Cplex paths
-#CPLEX_HOME = /Users/sonndinh/Applications/IBM/ILOG/CPLEX_Studio1261/cplex
-#CONCERT_HOME = /Users/sonndinh/Applications/IBM/ILOG/CPLEX_Studio1261/concert
 CPLEX_HOME = /export/austen/home/son/tools/ibm/ILOG/CPLEX_Studio1261/cplex
 CONCERT_HOME = /export/austen/home/son/tools/ibm/ILOG/CPLEX_Studio1261/concert
 CPLEX_INCLUDE_PATH = $(CPLEX_HOME)/include

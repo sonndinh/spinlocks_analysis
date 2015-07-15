@@ -22,7 +22,7 @@ unsigned int alloc_proc(double C, double L, double D, double Bn, double B1) {
 	else if (D == L+B1)
 		cout << "Denominator of equation for n_i is zero !!!" << endl;
 
-	cout << "New processor allocation: " << ceil(((C+Bn) - (L+B1))/(D - (L+B1))) << endl;
+	//	cout << "New processor allocation: " << ceil(((C+Bn) - (L+B1))/(D - (L+B1))) << endl;
 	return ceil(((C+Bn) - (L+B1))/(D - (L+B1)));
 }
 
@@ -1320,8 +1320,8 @@ double max_blocking_prio(Task *task, TaskSet *taskset, map<ResourceID, map<TaskI
 	return my_blocking;
 }
 
-/* Using numerical method instead of optimization */
-void task_analysis2(Task *task, TaskSet *taskset, unsigned int m, double *blocking, SpinlockType lock_type) {
+/* Using numerical method instead of optimization to bound blocking on a single processor of a task */
+void blocking_bound_single_proc(Task *task, TaskSet *taskset, unsigned int m, double *blocking, SpinlockType lock_type) {
 	TaskID myId = task->taskID;
 	TaskID r_i = task->R;
 	map<ResourceID, vector<TaskID>*> &interferences = task->interferences;
@@ -1370,6 +1370,80 @@ void task_analysis2(Task *task, TaskSet *taskset, unsigned int m, double *blocki
 	}
 }
 
+
+/* Max blocking for a whole job with FIFO locks */
+double max_blocking_whole_job_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data) {
+	TaskID my_task_id = task->taskID;
+	unsigned int my_proc_num = task->procNum;
+	
+	double blocking = 0;
+	map<ResourceID, map<TaskID, CSData> >::iterator it = x_data.begin();
+	for (; it != x_data.end(); it++) {
+		ResourceID res_id = it->first;
+		map<TaskID, CSData> &interfere = it->second;
+		unsigned int my_req_num = task->myResources[res_id]->requestNum;
+		double my_cs_len = task->myResources[res_id]->CSLength;
+		
+		// Add up self blocking
+		if (my_req_num < my_proc_num) {
+			blocking += (my_req_num*(my_req_num-1)/2) * my_cs_len;
+		} else {
+			blocking += ((my_proc_num-1)*(my_req_num-my_proc_num) + my_proc_num*(my_proc_num-1)/2) * my_cs_len;
+		}
+
+		// Add up blocking from other tasks
+		for (map<TaskID, CSData>::iterator inter_it=interfere.begin(); inter_it!=interfere.end(); inter_it++) {
+			TaskID his_task_id = inter_it->first;
+			unsigned int his_req_num = inter_it->second.requestNum;
+			double his_cs_len = inter_it->second.csLen;
+			unsigned int his_proc_num = inter_it->second.procNum;
+
+			blocking += min(my_proc_num*his_req_num, his_proc_num*my_req_num) * his_cs_len;
+		}
+	}
+
+	return blocking;
+}
+
+/* Blocking bound of a whole job */
+void blocking_bound_whole_job(Task *task, TaskSet *taskset, unsigned int m, double *blocking, SpinlockType lock_type) {
+	TaskID myId = task->taskID;
+	TaskID r_i = task->R;
+	map<ResourceID, vector<TaskID>*> &interferences = task->interferences;
+	map<ResourceID, vector<TaskID>*>::iterator rit = interferences.begin();
+	map<TaskID, Task*> &tset = taskset->tasks;
+
+	/* Gather information from requests of tau_x which 
+	 * interfere with my requests
+	 */
+	map<ResourceID, map<TaskID, CSData> > x_data;
+	for (; rit != interferences.end(); rit++) {
+		ResourceID rId = rit->first;
+		vector<TaskID>* vec = rit->second;
+		for (int i=0; i<vec->size(); i++) {
+			TaskID tId = vec->at(i);
+			/* Abort if this is me, but this is impossible */
+			if (tId == myId)
+				continue;
+			Task* tau_x = tset[tId];
+			unsigned int procNum = tau_x->procNum;
+			map<ResourceID, Resource*> &tau_x_resources = tau_x->myResources;
+			unsigned int N_x_q = tau_x_resources[rId]->requestNum;
+			double csLen = tau_x_resources[rId]->CSLength;
+			unsigned int request_num = njobs(tau_x, r_i)*N_x_q;
+			map<TaskID, CSData> &inner_map = x_data[rId];
+			CSData data = {procNum, request_num, csLen};
+			inner_map.insert(std::pair<TaskID, CSData> (tId, data));
+		}
+	}
+
+	if (lock_type == FIFO) {
+		*blocking = max_blocking_whole_job_fifo(task, x_data);
+	} else if (lock_type == PRIO_UNORDERED || lock_type == PRIO_FIFO) {
+		// Not support yet
+	}
+}
+
 /**
  * Schedulability test using the following procedure:
  * In each iteration, update blocking bound, then update number of processors 
@@ -1381,11 +1455,11 @@ void task_analysis2(Task *task, TaskSet *taskset, unsigned int m, double *blocki
 
 // Number of times a taskset is unschedulable caused by a task in the taskset
 // has inflated critical path length larger than D (L+Bi > D)
-int large_critical_path_length_fail_num=0;
-int different_num_opt_numerical = 0;
-int numerical_larger_opt_num = 0;
-int opt_larger_numerical_num = 0;
-int equal_num_opt_numerical = 0;
+//int large_critical_path_length_fail_num=0;
+//int different_num_opt_numerical = 0;
+//int numerical_larger_opt_num = 0;
+//int opt_larger_numerical_num = 0;
+//int equal_num_opt_numerical = 0;
 bool is_schedulable2(TaskSet *tset, unsigned int m, SpinlockType lock_type) {
 	map<TaskID, Task*> &taskset = tset->tasks;
 	map<TaskID, Task*>::iterator it = taskset.begin();
@@ -1400,13 +1474,12 @@ bool is_schedulable2(TaskSet *tset, unsigned int m, SpinlockType lock_type) {
 		it->second->newProcNum = it->second->procNum;
 	}
 
-	int iter_num = 0;
+	//	int iter_num = 0;
 	while (true) {
-		iter_num++;
+		//		iter_num++;
 		unsigned int total_proc_num = 0;
-		SCIP_Real blocking;
-		double blk_opti;
-		double blk_numerical;
+		//		SCIP_Real blocking;
+		double blocking;
 		
 		/* Copy values of newProcNum back to procNum for each task */
 		for (it = taskset.begin(); it != taskset.end(); it++) {
@@ -1417,42 +1490,54 @@ bool is_schedulable2(TaskSet *tset, unsigned int m, SpinlockType lock_type) {
 		/* Calculate new processors allocations for tasks */
 		for (it = taskset.begin(); it != taskset.end(); it++) {
 			Task * task = it->second;
-			task_analysis(task, tset, m, &blocking, lock_type);
-			blk_opti = blocking;
+			//			task_analysis(task, tset, m, &blocking, lock_type);
 
-			// Test the numerical method for blocking
-			task_analysis2(task, tset, m, &blk_numerical, lock_type);
-			if ( fabs(blk_opti - blk_numerical) > 0.0001) {
-				different_num_opt_numerical++;
-				cout << "Blocking by SCIP: " << blk_opti << "; Blocking by numerical: " << blk_numerical << endl;
-				if (fabs(blk_opti - blk_numerical) >= 0.5 && blk_opti > blk_numerical) {
-					opt_larger_numerical_num++;
-				} else if (fabs(blk_opti - blk_numerical) >= 0.5 && blk_opti < blk_numerical) {
-					numerical_larger_opt_num++;
-				}
-			} else {
-				equal_num_opt_numerical++;
-			}
-			//			cout << "Blocking by numerical : " << blk_numerical << endl;
-			//			cout << "Blocking by SCIP: " << blocking << "; Blocking by numerical: " << blk_numerical << endl;
-			// End test
+			// Blocking bound on a single processor using numerical method
+			blocking_bound_single_proc(task, tset, m, &blocking, lock_type);
+			//			if ( fabs(blocking - blk_numerical) > 0.0001) {
+			//				different_num_opt_numerical++;
+			//				cout << "Blocking by SCIP: " << blocking << "; Blocking by numerical: " << blk_numerical << endl;
+			//				if (fabs(blocking - blk_numerical) >= 0.5 && blocking > blk_numerical) {
+			//					opt_larger_numerical_num++;
+			//				} else if (fabs(blocking - blk_numerical) >= 0.5 && blocking < blk_numerical) {
+			//					numerical_larger_opt_num++;
+			//				}
+			//			} else {
+			//				equal_num_opt_numerical++;
+			//			}
 			
-			/* If D <= L + B1, this task cannot be schedulable */
-			if (task->T <= task->L + blocking) {
-				large_critical_path_length_fail_num++;
+			/* If D < L + B1, this task cannot be schedulable */
+			if (task->T < task->L + blocking) {
+				//				large_critical_path_length_fail_num++;
 				return false;
 			}
+
+			/*
+			// Blocking bound of the whole job
+			double blocking_whole_job;
+			if (lock_type == FIFO) {
+				blocking_bound_whole_job(task, tset, m, &blocking_whole_job, lock_type);
+
+				cout << "Whole blocking: " << blocking_whole_job << "; Old whole blocking: " << task->procNum*blocking << endl;
+				if (blocking_whole_job > task->procNum*blocking) {
+					cout << "New whole job's blocking is worse!" << endl;
+				}
+			}
+
+			// New number of processors needed
+			unsigned int proc_num;
+			if (lock_type == FIFO) {
+				proc_num = alloc_proc(task->C, task->L, task->T, blocking_whole_job, blocking);
+			} else {
+				proc_num = alloc_proc(task->C, task->L, task->T, task->procNum*blocking, blocking);
+			}
+			*/
 			unsigned int proc_num = alloc_proc(task->C, task->L, task->T, task->procNum*blocking, blocking);
+			
 			
 			/* If the new processors allocated is larger than the old one, update it,
 			 * otherwise, do not update it
 			 */
-			//			if (proc_num > task->procNum) {
-			//				task->procNum = proc_num;
-			//				task->converged = false;
-			//			} else {
-			//				task->converged = true;
-			//			}
 			if (proc_num > task->procNum) {
 				task->newProcNum = proc_num;
 				task->converged = false;
@@ -1462,7 +1547,6 @@ bool is_schedulable2(TaskSet *tset, unsigned int m, SpinlockType lock_type) {
 			
 			/* Update task's blocking bound, total number of processors allocated so far */
 			task->B1 = blocking;
-			//			total_proc_num += task->procNum;
 			total_proc_num += task->newProcNum;
 		}
 
@@ -1470,7 +1554,7 @@ bool is_schedulable2(TaskSet *tset, unsigned int m, SpinlockType lock_type) {
 		
 		/* If total processors used is larger than m, the taskset is unschedulable */
 		if (total_proc_num > m) {
-			cout << "Total processors needed > m" << endl;
+			//			cout << "Total processors needed > m" << endl;
 			return false;
 		}
 
@@ -1483,16 +1567,11 @@ bool is_schedulable2(TaskSet *tset, unsigned int m, SpinlockType lock_type) {
 		}
 
 		if (global_converged == true) {
-			cout << "Global converged reaches" << endl;
+			//			cout << "Global converged reaches" << endl;
 			return true;
 		}
 	}
 	
-	//	cout << "New total processors allocated: " << total_proc_num << endl;
-	
-	//	if (total_proc_num <= m)
-	//		return true;
-	//	return false;
 }
 
 /* Helper funtions */

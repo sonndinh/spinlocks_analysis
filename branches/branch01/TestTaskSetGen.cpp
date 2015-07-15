@@ -17,11 +17,11 @@ string g_cs_type;
 int g_taskset_num;
 
 
-extern int large_critical_path_length_fail_num;
-extern int different_num_opt_numerical;
-extern int equal_num_opt_numerical;
-extern int opt_larger_numerical_num;
-extern int numerical_larger_opt_num;
+//extern int large_critical_path_length_fail_num;
+//extern int different_num_opt_numerical;
+//extern int equal_num_opt_numerical;
+//extern int opt_larger_numerical_num;
+//extern int numerical_larger_opt_num;
 int main(int argc, char** argv) {
 	
 	if (argc < 6) {
@@ -99,72 +99,58 @@ int main(int argc, char** argv) {
 	// Generate a bunch of task sets
 	for (int i=0; i<TASKSET_NUM; i++) {
 		bool ret;
-		/*
 		TaskSet* taskset = create_taskset(PROCNUM, RESOURCE_NUM, N_MAX, cslen_type);
 		ret = init_iteration(taskset, PROCNUM);
 		if (ret == true)
 			success_count++;
 
+		//		cout << "--- FIFO LOCKS: " << endl;
 		if ( is_schedulable2(taskset, PROCNUM, FIFO) ) {
-			cout << "Taskset is schedulable with FIFO spin locks" << endl;
+			//			cout << "Taskset is schedulable with FIFO spin locks" << endl;
 			count_schedulable_fifo++;
 		} else {
-			cout << "Taskset is unschedulable with FIFO spin locks" << endl;
+			//			cout << "Taskset is unschedulable with FIFO spin locks" << endl;
 		}
-		*/
 
 		// Generate another task set and analyze with priority-ordered unordered tiebreak
 		TaskSet *another_tset = create_taskset(PROCNUM, RESOURCE_NUM, N_MAX, cslen_type);
 		ret = init_iteration(another_tset, PROCNUM);
 		
+		//		cout << "--- PRIORITY LOCKS: " << endl;
 		if ( is_schedulable2(another_tset, PROCNUM, PRIO_UNORDERED) ) {
-			cout << "Taskset is schedulable with Priority-ordered spin locks" << endl;
+			//			cout << "Taskset is schedulable with Priority-ordered spin locks" << endl;
 			count_schedulable_prio++;
 		} else {
-			cout << "Taskset is unschedulable with Priority-ordered spin locks" << endl;
+			//			cout << "Taskset is unschedulable with Priority-ordered spin locks" << endl;
 		}
 
-		/*
 		// Generate another task set and analyze with priority-ordered fifo tiebreak
 		TaskSet *another_tset2 = create_taskset(PROCNUM, RESOURCE_NUM, N_MAX, cslen_type);
 		ret = init_iteration(another_tset2, PROCNUM);
 		
+		//		cout << "--- PRIORITY FIFO LOCKS: " << endl;
 		if (is_schedulable2(another_tset2, PROCNUM, PRIO_FIFO) ) {
-			cout << "Taskset is schedulable with Prioirty-ordered spin locks & FIFO tiebreak" << endl;
+			//			cout << "Taskset is schedulable with Prioirty-ordered spin locks & FIFO tiebreak" << endl;
 			count_schedulable_prio_fifo++;
 		} else {
-			cout << "Taskset is unschedulable with Priority-ordered spin locks & FIFO tiebreak" << endl;
+			//			cout << "Taskset is unschedulable with Priority-ordered spin locks & FIFO tiebreak" << endl;
 		}
-		*/
 
-		/*
-		if( blocking_analysis(taskset, PROCNUM) ) {
-			cout << "Taskset is schedulable" << endl;
-			count_schedulable++;
-		} else {
-			cout << "Taskset is unschedulable" << endl;
-		}
-		*/
-		
-		/*
-		map<TaskID, Task*> &tset = taskset->tasks;
-		map<TaskID, Task*>::iterator it = tset.begin();
-		for (; it!=tset.end(); it++) {
-			//			if (it->first == 2) {
-				// test task 2 only
-				task_analysis(it->second, taskset, PROCNUM);
-				//	break;
-				//			}
-		}
-		*/
-		
-		/*
 		map<TaskID, Task*> &tset = taskset->tasks;
 		for (map<TaskID, Task*>::iterator it=tset.begin(); it!=tset.end(); it++) {
 			free(it->second);
 		}
 		free(taskset);
-		*/
+		
+		for (map<TaskID, Task*>::iterator it=another_tset->tasks.begin(); it!=another_tset->tasks.end(); it++) {
+			free(it->second);
+		}
+		free(another_tset);
+
+		for (map<TaskID, Task*>::iterator it=another_tset2->tasks.begin(); it!=another_tset2->tasks.end(); it++) {
+			free(it->second);
+		}
+		free(another_tset2);
 	}
 
 	/*
@@ -176,15 +162,15 @@ int main(int argc, char** argv) {
 	prio_fifo_ofile.close();	
 	*/
 	
-	//	cout << "Percent of schedulable tasksets with FIFO locks: " << (double) count_schedulable_fifo*100/TASKSET_NUM << "%" << endl;
+	cout << "Percent of schedulable tasksets with FIFO locks: " << (double) count_schedulable_fifo*100/TASKSET_NUM << "%" << endl;
 	cout << "Percent of schedulable tasksets with Priority locks: " << (double) count_schedulable_prio*100/TASKSET_NUM << "%" << endl;
-	//cout << "Percent of schedulable tasksets with Priority locks & FIFO tiebreak: " << (double) count_schedulable_prio_fifo*100/TASKSET_NUM << "%" << endl;
+	cout << "Percent of schedulable tasksets with Priority locks & FIFO tiebreak: " << (double) count_schedulable_prio_fifo*100/TASKSET_NUM << "%" << endl;
 
 	//	cout << "The number of failures caused by large inflated critical path length: " << large_critical_path_length_fail_num << endl;
-	cout << "Number of times blocking by optimization and numerical method are different: " << different_num_opt_numerical << endl;
-	cout << "Number of times blocking by optimization > by numerical: " << opt_larger_numerical_num << endl;
-	cout << "Number of times blocking by numerical > by optimization: " << numerical_larger_opt_num << endl;
-	cout << "Number of times blocking by optimization and numerical method are same: " << equal_num_opt_numerical << endl;
+	//	cout << "Number of times blocking by optimization and numerical method are different: " << different_num_opt_numerical << endl;
+	//	cout << "Number of times blocking by optimization > by numerical: " << opt_larger_numerical_num << endl;
+	//	cout << "Number of times blocking by numerical > by optimization: " << numerical_larger_opt_num << endl;
+	//	cout << "Number of times blocking by optimization and numerical method are same: " << equal_num_opt_numerical << endl;
 	//	cout << "Percent of success after initiating: " << (double)success_count*100/TASKSET_NUM << "%" << endl;
 	return 0;
 }
