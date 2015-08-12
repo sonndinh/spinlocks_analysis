@@ -33,13 +33,13 @@ PROG = blk_analysis
 
 all:: $(PROG)
 
-SRC = BlockingAnalysis.cpp \
-	TaskSetGenerator.cpp \
-	TestTaskSetGen.cpp
+SRC = blocking_analysis.cc \
+	taskset_generator.cc \
+	main.cc
 
-OBJS = BlockingAnalysis.o \
-	TaskSetGenerator.o \
-	TestTaskSetGen.o
+OBJS = blocking_analysis.o \
+	taskset_generator.o \
+	main.o
 
 $(OBJS): $(SRC)
 	$(CXX) $(CXXFLAGS) -c $(SRC)
