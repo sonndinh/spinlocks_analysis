@@ -588,6 +588,11 @@ double BlockingAnalysis::delay_per_request(Task *task, TaskSet *taskset, Resourc
 		
 		// Update value for dpr either way
 		dpr = tmp;
+
+		if (dpr > task->period_) {
+			dpr = task->period_;
+			converged = true;
+		}
 	}
 
 	return dpr;
@@ -790,6 +795,9 @@ double BlockingAnalysis::max_blocking_fifo(Task *task, map<ResourceID, map<TaskI
 				unsigned int his_req_num = inner_it->second.request_num;
 				double his_cs_len = inner_it->second.cs_len;
 				tmp += min(his_proc_num*i, his_req_num)*his_cs_len;
+				
+				//LJ
+				//tmp += min(min(his_proc_num, tset[his_task_id]->myResources[res_id]->requestNum)*i, his_req_num)*his_cs_len;
 			}
 
 			blks.push_back(tmp);
@@ -1001,12 +1009,90 @@ double BlockingAnalysis::max_blocking_whole_job_fifo(Task *task, map<ResourceID,
 			double his_cs_len = inter_it->second.cs_len;
 			unsigned int his_proc_num = inter_it->second.proc_num;
 
+			//LJ
+			//unsigned int his_proc_num = min(inter_it->second.procNum,tset[his_task_id]->myResources[res_id]->requestNum);
 			blocking += min(my_proc_num*his_req_num, his_proc_num*my_req_num) * his_cs_len;
 		}
 	}
 
 	return blocking;
 }
+
+// Max blocking for the whole job with Priority lock
+double BlockingAnalysis::max_blocking_whole_job_prio(Task *task, TaskSet *taskset, map<ResourceID, map<TaskID, CSData> > &x_data, map<ResourceID, double> &dpr) {
+	TaskID my_task_id = task->task_id_;
+	unsigned int my_proc_num = task->proc_num_;
+
+	map<TaskID, Task*> &tset = taskset->tasks_;
+	vector<TaskID> &my_lp_tasks = taskset->lower_prio_tasks_[task->task_id_];
+	vector<TaskID> &my_ep_tasks = taskset->equal_prio_tasks_[task->task_id_];
+	vector<TaskID> &my_hp_tasks = taskset->higher_prio_tasks_[task->task_id_];
+
+	double blocking = 0;
+	map<ResourceID, map<TaskID, CSData> >::iterator it = x_data.begin();
+	for (; it != x_data.end(); it++) {
+		ResourceID res_id = it->first;
+		map<TaskID, CSData> &interfere = it->second;
+		unsigned int my_req_num = task->my_resources_[res_id]->request_num;
+		double my_cs_len = task->my_resources_[res_id]->critical_section_len;
+
+		// Add up self blocking
+		if (my_req_num < my_proc_num) {
+			blocking += (my_req_num*(my_req_num-1)/2) * my_cs_len;
+		} else {
+			blocking += ((my_proc_num-1)*(my_req_num-my_proc_num) + my_proc_num*(my_proc_num-1)/2) * my_cs_len;
+		}
+
+		//copy from single prio for other tasks, only FIFO tie break
+		// Sort interference tasks' data by cs length (decreasing order)
+		vector<CSData> sorted_by_cslen;
+		sort_by_cslen(task, taskset, interfere, sorted_by_cslen);
+
+		// Add up blocking from lower locking-priority tasks
+		unsigned int remain_req = my_req_num;
+		for (int i=0; i<sorted_by_cslen.size(); i++) {
+			if (sorted_by_cslen[i].request_num >= remain_req) {
+				blocking += remain_req * sorted_by_cslen[i].cs_len;
+				break;
+			} else {
+				blocking += sorted_by_cslen[i].request_num * sorted_by_cslen[i].cs_len;
+				remain_req -= sorted_by_cslen[i].request_num;
+			}
+		}
+
+		map<TaskID, CSData>::iterator inter_it = interfere.begin();
+		for (; inter_it != interfere.end(); inter_it++) {
+			TaskID his_task_id = inter_it->first;
+
+			//equal priority
+			if (find(my_ep_tasks.begin(), my_ep_tasks.end(), his_task_id) != my_ep_tasks.end() ) {
+				// Add blocking from equal priority tasks
+				unsigned int his_req_num = inter_it->second.request_num;
+				unsigned int his_proc_num = inter_it->second.proc_num;
+				double his_cs_len = inter_it->second.cs_len;
+				blocking += min(his_proc_num*my_req_num, his_req_num*my_proc_num)*his_cs_len;
+cout <<"need to fix min(his_proc_num, per_job_request)"<<endl;
+			//high priority
+			} else if (find(my_hp_tasks.begin(), my_hp_tasks.end(), his_task_id) != my_hp_tasks.end() ) {
+				// Add blocking from higher priority tasks
+				unsigned int his_req_num = inter_it->second.request_num;
+				double his_cs_len = inter_it->second.cs_len;
+				double dpr_for_curr_res = dpr[res_id];
+				unsigned int req_inside_dpr = njobs(tset[his_task_id], dpr_for_curr_res)*tset[his_task_id]->my_resources_[res_id]->request_num;
+				blocking += min(req_inside_dpr*my_req_num, his_req_num*my_proc_num) * his_cs_len;
+
+
+//LJ
+//cout<<"\t"<< inter_it->second.procNum << " " << req_inside_dpr <<" "<< tset[his_task_id]->myResources[res_id]->requestNum <<endl;
+
+
+			}
+		}
+	}
+
+	return blocking;
+}
+
 
 // Blocking bound of a whole job
 void BlockingAnalysis::blocking_bound_whole_job(Task *task, TaskSet *taskset, unsigned int m, double *blocking, SpinlockType lock_type) {
@@ -1041,8 +1127,19 @@ void BlockingAnalysis::blocking_bound_whole_job(Task *task, TaskSet *taskset, un
 
 	if (lock_type == FIFO) {
 		*blocking = max_blocking_whole_job_fifo(task, x_data);
-	} else if (lock_type == PRIO_UNORDERED || lock_type == PRIO_FIFO) {
-		// Not support yet
+	} else if (lock_type == PRIO_UNORDERED) {
+		// Not supported yet
+	} else if (lock_type == PRIO_FIFO) {
+		map<ResourceID, double> dpr;
+		map<ResourceID, Resource*> &my_resources = task->my_resources_;
+		for (map<ResourceID, Resource*>::iterator it = my_resources.begin(); it != my_resources.end(); it++) {
+			ResourceID res_id = it->first;
+			double delay = delay_per_request(task, taskset, res_id, lock_type);
+			dpr[res_id] = delay;
+		}
+		
+		//LJ
+		*blocking = max_blocking_whole_job_prio(task, taskset, x_data, dpr);
 	}
 }
 
@@ -1106,32 +1203,27 @@ bool BlockingAnalysis::is_schedulable(TaskSet *tset, unsigned int m, SpinlockTyp
 			//				equal_num_opt_numerical++;
 			//			}
 			
-			/* If D < L + B1, this task cannot be schedulable */
+			// If D < L + B1, this task cannot be schedulable
 			if (task->period_ < task->span_ + blocking) {
-				//				large_critical_path_length_fail_num++;
+				//large_critical_path_length_fail_num++;
 				return false;
 			}
 
-			/*
-			// Blocking bound of the whole job
+			// Printout is using whole blocking equation gives better value
 			double blocking_whole_job;
-			if (lock_type == FIFO) {
+			if (lock_type == FIFO || lock_type == PRIO_FIFO) {
 				blocking_bound_whole_job(task, tset, m, &blocking_whole_job, lock_type);
-
-				cout << "Whole blocking: " << blocking_whole_job << "; Old whole blocking: " << task->procNum*blocking << endl;
-				if (blocking_whole_job > task->procNum*blocking) {
-					cout << "New whole job's blocking is worse!" << endl;
+				if (blocking_whole_job < blocking * task->proc_num_) {
+					//cout << "Whole blocking equation is better!" << endl;
+				} else if (blocking_whole_job > blocking * task->proc_num_) {
+					//cout << "Whole blocking equation is worse!" << endl;
+				} else {
+					//cout << "Whole blocking equation does not help!" << endl;
 				}
 			}
-
-			// New number of processors needed
-			unsigned int proc_num;
-			if (lock_type == FIFO) {
-				proc_num = alloc_proc(task->C, task->L, task->T, blocking_whole_job, blocking);
-			} else {
-				proc_num = alloc_proc(task->C, task->L, task->T, task->procNum*blocking, blocking);
-			}
-			*/
+			
+			//blocking_bound_whole_job(task, tset, m, &blocking_whole_job, lock_type);
+			//unsigned int proc_num = alloc_proc(task->wcet_, task->span_, task->period_, blocking_whole_job, blocking);
 			unsigned int proc_num = alloc_proc(task->wcet_, task->span_, task->period_, task->proc_num_*blocking, blocking);
 			
 			

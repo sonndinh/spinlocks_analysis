@@ -106,6 +106,7 @@ class BlockingAnalysis {
 
 	// Upper bound blocking of a whole job with FIFO locks
 	double max_blocking_whole_job_fifo(Task *task, map<ResourceID, map<TaskID, CSData> > &x_data);
+	double max_blocking_whole_job_prio(Task *task, TaskSet *taskset, map<ResourceID, map<TaskID, CSData> > &x_data, map<ResourceID, double> &dpr);
 	void blocking_bound_whole_job(Task *task, TaskSet *taskset, unsigned int m, double *blocking, SpinlockType lock_type);
 
  public:

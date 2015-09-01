@@ -98,7 +98,7 @@ bool compare_tasksets(const TaskSet &first, const TaskSet &second) {
 int main(int argc, char** argv) {
 	
 	if (argc < 6) {
-		cout << "Usage: ./prog ProcNum ResourceNum Nmax cs_type repetition" << endl;
+		cout << "Usage: ./program {processor_number} {resource_number} {max_critical_sections_number} {critical_section_type} {repetition}" << endl;
 		exit(1);
 	}
 
@@ -188,19 +188,19 @@ int main(int argc, char** argv) {
 		// Generate another task set and analyze with priority-ordered unordered tiebreak
 		//		TaskSet *another_tset = create_taskset(PROCNUM, RESOURCE_NUM, N_MAX, cslen_type);
 		//		ret = init_iteration(another_tset, PROCNUM);
-		TaskSet *taskset2 = new TaskSet();
-		*taskset2 = *taskset1;
+		//		TaskSet *taskset2 = new TaskSet();
+		//		*taskset2 = *taskset1;
 
 		// Test the copy assignment operator of TaskSet
-		assert(compare_tasksets(*taskset1, *taskset2));
+		//		assert(compare_tasksets(*taskset1, *taskset2));
 		
 		//		cout << "--- PRIORITY LOCKS: " << endl;
-		if ( analyzer.is_schedulable(taskset2, kProcNum, PRIO_UNORDERED) ) {
+		//		if ( analyzer.is_schedulable(taskset2, kProcNum, PRIO_UNORDERED) ) {
 			//			cout << "Taskset is schedulable with Priority-ordered spin locks" << endl;
-			count_schedulable_prio++;
-		} else {
+		//			count_schedulable_prio++;
+		//		} else {
 			//			cout << "Taskset is unschedulable with Priority-ordered spin locks" << endl;
-		}
+		//		}
 
 		// Generate another task set and analyze with priority-ordered fifo tiebreak
 		//		TaskSet *another_tset2 = create_taskset(PROCNUM, RESOURCE_NUM, N_MAX, cslen_type);
@@ -219,7 +219,7 @@ int main(int argc, char** argv) {
 		}
 
 		delete taskset1;
-		delete taskset2;
+		//		delete taskset2;
 		delete taskset3;
 	}
 
@@ -233,7 +233,7 @@ int main(int argc, char** argv) {
 	*/
 	
 	cout << "Percent of schedulable tasksets with FIFO locks: " << (double) count_schedulable_fifo*100/kTasksetNum << "%" << endl;
-	cout << "Percent of schedulable tasksets with Priority locks: " << (double) count_schedulable_prio*100/kTasksetNum << "%" << endl;
+	//	cout << "Percent of schedulable tasksets with Priority locks: " << (double) count_schedulable_prio*100/kTasksetNum << "%" << endl;
 	cout << "Percent of schedulable tasksets with Priority locks & FIFO tiebreak: " << (double) count_schedulable_prio_fifo*100/kTasksetNum << "%" << endl;
 
 	//	cout << "The number of failures caused by large inflated critical path length: " << large_critical_path_length_fail_num << endl;

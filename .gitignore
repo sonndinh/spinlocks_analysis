@@ -8,5 +8,3 @@ test/*~
 test/*.lp
 results/*
 tmp/*
-branches/branch01/results/*
-branches/branch01/tmp/*
