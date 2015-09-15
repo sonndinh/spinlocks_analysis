@@ -16,7 +16,8 @@ int g_max_request_num;
 string g_cs_type;
 int g_taskset_num;
 
-
+// Only use for debugging: return true if 2 tasksets are equal
+// otherwise, return false
 bool compare_tasksets(const TaskSet &first, const TaskSet &second) {
 	assert(first.tasks_.size() == second.tasks_.size());
 	for (map<TaskID, Task*>::const_iterator it=first.tasks_.begin(); it!=first.tasks_.end(); it++) {
@@ -90,15 +91,11 @@ bool compare_tasksets(const TaskSet &first, const TaskSet &second) {
 	return true;
 }
 
-//extern int large_critical_path_length_fail_num;
-//extern int different_num_opt_numerical;
-//extern int equal_num_opt_numerical;
-//extern int opt_larger_numerical_num;
-//extern int numerical_larger_opt_num;
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
 	
 	if (argc < 6) {
-		cout << "Usage: ./program {processor_number} {resource_number} {max_critical_sections_number} {critical_section_type} {repetition}" << endl;
+		cout << "Usage: " << argv[0] 
+			 << " {processor_number} {resource_number} {max_critical_sections_number} {critical_section_type} {repetition}" << endl;
 		exit(1);
 	}
 
@@ -168,21 +165,21 @@ int main(int argc, char** argv) {
 	prio_fifo_ofile.open(ss.str().c_str());
 	*/
 
+	// Beginning of the run
+	bool is_beginning = true;
 	BlockingAnalysis& analyzer = BlockingAnalysis::get_instance();
 	// Generate a bunch of task sets
 	for (int i=0; i<kTasksetNum; i++) {
 		bool ret;
-		TaskSet* taskset1 = create_taskset(kProcNum, kResourceNum, kNMax, cslen_type);
+		//TaskSet* taskset1 = create_taskset(kProcNum, kResourceNum, kNMax, cslen_type);
+		string parent_folder = "/export/austen/home/son/codes/spinlocks_analysis/tasksets";
+		TaskSet* taskset1 = create_taskset_and_dump(kProcNum, kResourceNum, kNMax, cslen_type, parent_folder, is_beginning);
 		ret = init_iteration(taskset1, kProcNum);
 		if (ret == true)
 			success_count++;
 
-		//		cout << "--- FIFO LOCKS: " << endl;
 		if ( analyzer.is_schedulable(taskset1, kProcNum, FIFO) ) {
-			//			cout << "Taskset is schedulable with FIFO spin locks" << endl;
 			count_schedulable_fifo++;
-		} else {
-			//			cout << "Taskset is unschedulable with FIFO spin locks" << endl;
 		}
 
 		// Generate another task set and analyze with priority-ordered unordered tiebreak
@@ -210,16 +207,12 @@ int main(int argc, char** argv) {
 
 		assert(compare_tasksets(*taskset1, *taskset3));
 		
-		//		cout << "--- PRIORITY FIFO LOCKS: " << endl;
 		if ( analyzer.is_schedulable(taskset3, kProcNum, PRIO_FIFO) ) {
-			//			cout << "Taskset is schedulable with Prioirty-ordered spin locks & FIFO tiebreak" << endl;
 			count_schedulable_prio_fifo++;
-		} else {
-			//			cout << "Taskset is unschedulable with Priority-ordered spin locks & FIFO tiebreak" << endl;
 		}
 
 		delete taskset1;
-		//		delete taskset2;
+		//delete taskset2;
 		delete taskset3;
 	}
 
@@ -236,11 +229,5 @@ int main(int argc, char** argv) {
 	//	cout << "Percent of schedulable tasksets with Priority locks: " << (double) count_schedulable_prio*100/kTasksetNum << "%" << endl;
 	cout << "Percent of schedulable tasksets with Priority locks & FIFO tiebreak: " << (double) count_schedulable_prio_fifo*100/kTasksetNum << "%" << endl;
 
-	//	cout << "The number of failures caused by large inflated critical path length: " << large_critical_path_length_fail_num << endl;
-	//	cout << "Number of times blocking by optimization and numerical method are different: " << different_num_opt_numerical << endl;
-	//	cout << "Number of times blocking by optimization > by numerical: " << opt_larger_numerical_num << endl;
-	//	cout << "Number of times blocking by numerical > by optimization: " << numerical_larger_opt_num << endl;
-	//	cout << "Number of times blocking by optimization and numerical method are same: " << equal_num_opt_numerical << endl;
-	//	cout << "Percent of success after initiating: " << (double)success_count*100/TASKSET_NUM << "%" << endl;
 	return 0;
 }

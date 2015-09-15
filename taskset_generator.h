@@ -125,6 +125,9 @@ class TaskSet {
 // Function prototypes for generating task set
 Task* create_task(int m);
 TaskSet* create_taskset(unsigned int m, unsigned int resource_num, unsigned int n_max, CriticalDuration cslen_type);
+TaskSet* create_taskset_and_dump(unsigned int m, unsigned int resource_num, unsigned int n_max, 
+								 CriticalDuration cslen_type, string parent_folder, bool& is_beginning);
+
 bool init_iteration(TaskSet *taskset, unsigned int m);
 
 #endif // __TASKSET_GENERATOR_H__

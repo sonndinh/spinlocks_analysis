@@ -4,6 +4,10 @@
 #include <map>
 #include <algorithm>
 #include <cassert>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 
 #define _CXX_11_
 #ifdef _CXX_11_
@@ -16,6 +20,11 @@
 #include "blocking_analysis.h"
 
 using namespace std;
+
+extern int g_proc_num;
+extern int g_resource_num;
+extern int g_max_request_num;
+extern string g_cs_type;
 
 // #define _DEBUG_DETERMINISTIC_
 #ifdef _DEBUG_DETERMINISTIC_
@@ -220,6 +229,171 @@ TaskSet* create_taskset(unsigned int m, unsigned int resource_num, unsigned int 
 
 	return tset;
 }
+
+// Convert numeric month to string
+string month_to_string(int numeric_mon) {
+	switch(numeric_mon) {
+	case 1:
+		return "Jan";
+	case 2:
+		return "Feb";
+	case 3:
+		return "Mar";
+	case 4:
+		return "Apr";
+	case 5:
+		return "May";
+	case 6:
+		return "Jun";
+	case 7:
+		return "Jul";
+	case 8:
+		return "Aug";
+	case 9:
+		return "Sep";
+	case 10:
+		return "Oct";
+	case 11:
+		return "Nov";
+	case 12:
+		return "Dec";
+	default:
+		return "Unknown";
+	}
+}
+
+
+// Helper function to make a directory if it does not exist
+void mkdir_if_not_exist(string path) {
+	struct stat sb;
+	if (stat(path.c_str(), &sb) != 0) {
+		if (mkdir(path.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
+			cout << "Error: " << strerror(errno) << endl;
+			exit(-1);
+		}
+	}
+}
+
+// Run folder is only created when generating the first taskset of a run
+// This function also updates the meta file of runs
+string make_run_folder_path(string parent_folder) {
+	mkdir_if_not_exist(parent_folder);
+	
+	time_t rawtime = time(NULL);
+	struct tm* dateinfo = localtime(&rawtime);
+	string date_mon = month_to_string(dateinfo->tm_mon+1) + to_string(dateinfo->tm_mday);
+	string tset_params = to_string(g_proc_num) + "cores_" + to_string(g_resource_num) +
+		"res_" + to_string(g_max_request_num) + "cs_" + g_cs_type;
+
+	string full_path = parent_folder + "/" + to_string(dateinfo->tm_year+1900);
+	mkdir_if_not_exist(full_path);
+
+	full_path += "/" + date_mon;
+	mkdir_if_not_exist(full_path);
+
+	full_path += "/" + tset_params;
+	
+	string run_folder;
+	struct stat sb;
+	if (stat(full_path.c_str(), &sb) != 0) {
+		// If the path does not exist, create a folder for the first run
+		mkdir_if_not_exist(full_path);
+		run_folder = full_path + "/run1";
+
+		if (mkdir(run_folder.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) != 0) {
+			cout << "Fail to make directory for run 1!" << endl;
+			cout << "Error: " << strerror(errno) << endl;
+			exit(-1); // fail to make directory
+		}
+		
+		string meta_path = full_path + "/META";
+		fstream meta_file;
+		meta_file.open(meta_path.c_str(), fstream::out);
+		meta_file << "1";
+		meta_file.close();
+	} else {
+		// If the path exists, add a new run folder and update meta file
+		string meta_path = full_path + "/META";
+		fstream meta_file;
+		meta_file.open(meta_path.c_str(), fstream::in);
+		
+		unsigned current_num_of_runs;
+		meta_file >> current_num_of_runs;
+		meta_file.close();
+
+		run_folder = full_path + "/run" + to_string(++current_num_of_runs);
+		mkdir_if_not_exist(run_folder);
+
+		meta_file.open(meta_path.c_str(), fstream::out | fstream::trunc);
+		meta_file << current_num_of_runs;
+		meta_file.close();
+	}
+
+	// Return the path to the correct run folder
+	return run_folder;
+}
+
+
+void dump_task_to_file(Task* task, string folder) {
+	
+}
+
+// Global variable to store the path to the run folder
+// It is used by the next calls to create other tasksets
+// so that all tasksets of the same run go to the same run folder
+string run_folder_path;
+
+// Create a new task set and dump each task parameters to a file
+// @param[in] parent_folder The folder that will contains all tasksets of all runs
+// @param[in] is_beginning True if this is the first taskset created in this run
+TaskSet* create_taskset_and_dump(unsigned int m, unsigned int resource_num, unsigned int n_max, 
+								 CriticalDuration cslen_type, string parent_folder, bool& is_beginning) {
+	TaskSet* tset = create_taskset(m, resource_num, n_max, cslen_type);
+
+	string taskset_folder_path;
+	if (is_beginning == true) {
+		// If this is the beginning of the run, we make a folder for this run
+		run_folder_path = make_run_folder_path(parent_folder); // also update meta file of runs
+		is_beginning = false;
+
+		// Create a folder for this taskset
+		taskset_folder_path = run_folder_path + "/taskset1";
+		mkdir_if_not_exist(taskset_folder_path);
+		
+		string tset_meta_path = run_folder_path + "/META";
+		fstream meta_file;
+		meta_file.open(tset_meta_path.c_str(), fstream::out);
+		meta_file << "1";
+		meta_file.close();
+
+	} else {
+		// This is a subsequence taskset
+		string tset_meta_path = run_folder_path + "/META";
+		fstream meta_file;
+		meta_file.open(tset_meta_path.c_str(), fstream::in);
+
+		unsigned num_of_tsets;
+		meta_file >> num_of_tsets;
+		meta_file.close();
+
+		taskset_folder_path = run_folder_path + "/taskset" + to_string(++num_of_tsets);
+		mkdir_if_not_exist(taskset_folder_path.c_str());
+
+		meta_file.open(tset_meta_path.c_str(), fstream::out | fstream::trunc);
+		meta_file << num_of_tsets;
+		meta_file.close();
+	}
+
+	// In either cases above, after all we have the correct path for the current taskset
+	// Now store each task of the taskset to that folder
+	map<TaskID, Task*>& tasks = tset->tasks_;
+	for (map<TaskID, Task*>::iterator it = tasks.begin(); it != tasks.end(); it++) {
+		dump_task_to_file(it->second, taskset_folder_path);
+	}
+
+	return tset;
+}
+
 
 // Initialize blocking time, #processors, response time 
 // Also, update "interferences" for each task in task set
